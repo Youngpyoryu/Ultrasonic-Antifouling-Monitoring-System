@@ -866,7 +866,8 @@
       panel.innerHTML = `
         <div class="detail-main">
           <h3>${esc(t.tank_name)} ${badgeHtml(t.status)}
-            ${t.user_added ? `<button type="button" class="btn-delete-device" id="btnDeleteDevice">🗑 장비 삭제</button>` : ""}</h3>
+            ${t.user_added ? `<button type="button" class="btn-delete-device" id="btnDeleteDevice">🗑 장비 삭제</button>`
+              : `<button type="button" class="btn-report" id="btnTankReport" title="이 장비의 상태·AI 이상 감지·경고·권고 조치를 정리한 리포트 (인쇄·PDF 저장 가능)">📋 이 장비 리포트</button>`}</h3>
           <p>${esc(t.location)} · 탱크 용량 약 ${t.capacity_l ? Number(t.capacity_l).toLocaleString() : "—"} L${t.description ? " · " + esc(t.description) : ""}</p>
           <div class="detail-grid">${order.map(metricBox).join("")}</div>
           <div class="detail-meta">
@@ -900,6 +901,7 @@
         </div>`;
 
       document.getElementById("btnDeleteDevice")?.addEventListener("click", () => deleteDevice(t.tank_id));
+      document.getElementById("btnTankReport")?.addEventListener("click", () => window.openReport?.([t.tank_id]));
       renderAlertHistory(t);
       renderHistory(t);
     }
@@ -1175,6 +1177,7 @@
   </script>
   <script src="./iforest.js"></script>
   <script src="./anomaly-ai.js"></script>
+  <script src="./report.js"></script>
   <script src="./chatbot.js"></script>
   <script src="./notify.js"></script>
   <script src="./export.js"></script>

@@ -300,6 +300,10 @@
     ready: () => !!state.history && !!ensureModel(),
     assess: t => assess(t),
     all: () => state.tanks.map(assess),
+    score: (tid, r) => score(tid, r),          // 한 시점 점수 (수신 없음·학습 기록 없음 → null)
+    level,
+    explain: (tid, r) => explain(tid, r),
+    baseline: tid => { const st = ai.stats.get(tid); return st && Object.fromEntries(FEATURES.map((k, j) => [k, { med: st.med[j], scale: st.scale[j] }])); },
     info: () => ai.info,
     validation: () => ai.validation,
     retrain: () => { ai.model = null; return ensureModel(); }

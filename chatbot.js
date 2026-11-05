@@ -52,7 +52,7 @@
     </section>`);
 
   const EXAMPLES = ["지금 이상 있는 수조", "총 전력량", "수온 가장 높은 수조", "패류 수조 상태",
-                    "산호 전시 수족관 최근 6시간 수온", "어제 전력량 많은 수조", "진행 중 경고", "AI 이상 점수", "로비 수족관 vs 메인 전시 수족관"];
+                    "산호 전시 수족관 최근 6시간 수온", "어제 전력량 많은 수조", "진행 중 경고", "AI 이상 점수", "우선 점검 대상", "로비 수족관 vs 메인 전시 수족관"];
   const $ = id => document.getElementById(id);
   const log = $("cbLog");
 
@@ -83,6 +83,8 @@
   log.addEventListener("click", e => {
     const a = e.target.closest(".cb-tank");
     if (a) selectTank(a.dataset.id);
+    const r = e.target.closest("[data-report]");
+    if (r) window.openReport?.(r.dataset.report ? r.dataset.report.split(",") : undefined);
   });
 
   // ---------------- 공통 도우미 ----------------
@@ -201,6 +203,8 @@
 
     const { tanks, ambiguous, word } = parseTanks(q);
     if (ambiguous) return `<p>'${esc(word)}'(이)가 들어간 수조가 여러 개입니다. 어느 수조인가요?</p><ul>${ambiguous.map(t => `<li>${tankLink(t)}</li>`).join("")}</ul>`;
+    // AI 장비 관리 리포트 (report.js)
+    if (/리포트|보고서|관리\s*(현황|등급|점수)|점검\s*(대상|순서|우선)|우선\s*(조치|순위|점검)|무엇부터|뭐부터/.test(q) && !/엑셀|csv|내보내/i.test(q)) return reportHtml(tanks);
     // AI(Isolation Forest) 판단 — '이상 있는 수조'(규칙 판정)와 구분해 AI·점수·이상치를 말한 경우만
     //   '이상 탐지 기준'·'AI 경고'처럼 기준·경고를 묻는 질문은 기존 답변으로
     if (/(?<![a-z])ai(?![a-z])|인공\s*지능|머신\s*러닝|isolation|아이솔레이션|iforest|이상\s*점수|이상치|이상\s*탐지|평소와\s*다른/i.test(q)
@@ -227,6 +231,18 @@
     if (/이상|문제|위험|주의|통신|끊김|정지|몇\s*대|상태|요약|현황|어때|괜찮|정상/.test(q)) return overviewHtml(q);
     if (/수조|수족관|목록|리스트|몇\s*개/.test(q)) return listHtml();
     return `<p>질문을 이해하지 못했어요. 수조 이름, 측정 항목(수온·수위·탁도·전력·전력량), 기간(오늘·어제·최근 6시간·7일)을 넣어 물어봐 주세요.</p>` + helpHtml(false, true);
+  }
+
+  function reportHtml(tanks) {
+    if (!window.reportSummary || !window.anomalyAI?.ready()) return `<p>리포트에 필요한 기록을 아직 불러오는 중이에요. 잠시 후 다시 물어봐 주세요.</p>`;
+    const all = window.reportSummary();
+    const pick = tanks.length ? all.filter(x => tanks.some(t => t.tank_id === x.t.tank_id)) : all.filter(x => x.urgency !== "정기").slice(0, 5);
+    const row = x => `<li>${tankLink(x.t)} — <b>${x.grade}등급 ${x.score}점</b> · 조치 ${esc(x.urgency)}${x.issues.length ? ` · ${esc(x.issues[0])}` : ""}<br><span class="muted">권고: ${esc(x.advice[0])}</span></li>`;
+    const head = tanks.length ? `<p>장비 관리 진단입니다.</p>`
+      : pick.length ? `<p>우선 점검할 장비 ${pick.length}대입니다 (관리 점수 낮은 순).</p>` : `<p>지금은 우선 조치할 장비가 없습니다. 모든 장비가 정기 점검 대상입니다.</p>`;
+    return head + (pick.length ? `<ul>${pick.map(row).join("")}</ul>` : "") +
+      `<p><button type="button" class="cb-chip" data-report="${esc(tanks.map(t => t.tank_id).join(","))}">📋 ${tanks.length === 1 ? "이 장비" : "전체"} 리포트 열기</button></p>` +
+      `<p class="muted">관리 점수 = 현재 상태·AI 판단·기간 내 경고·수신률·추세 변화를 반영한 100점 감점식 · 리포트는 인쇄·PDF 저장 가능</p>`;
   }
 
   function aiHtml(tanks) {
@@ -256,7 +272,8 @@
       <li><b>경고</b>: 진행 중 경고 / 패류 수조 경고 이력</li>
       <li><b>비교</b>: 로비 수족관 vs 메인 전시 수족관 수온</li>
       <li><b>기준</b>: 수온 판정 기준</li>
-      <li><b>AI</b>: AI 이상 점수 / 패류 수조 AI 판단</li></ul>`;
+      <li><b>AI</b>: AI 이상 점수 / 패류 수조 AI 판단</li>
+      <li><b>리포트</b>: 우선 점검 대상 / 패류 수조 관리 리포트</li></ul>`;
     if (short) return ex;
     return `${first ? "<p>안녕하세요! 대시보드 데이터에 대해 물어보세요.</p>" : ""}<p>이렇게 물어볼 수 있어요.</p>${ex}
       <p class="muted">'오늘·어제·최근 N시간'은 데이터의 가장 최근 시각(${esc(fmtTime(latestTs()))}) 기준입니다. 수조 이름을 누르면 상세 화면으로 이동합니다.</p>`;
