@@ -63,12 +63,15 @@ def replace_file(path, write):
     """임시 파일에 쓴 뒤 교체. 웹 서버가 읽는 중이면 잠시 후 재시도 (Windows)."""
     tmp = path.with_name(path.name + '.tmp')
     write(tmp)
-    for _ in range(20):
+    for i in range(40):                      # 최대 약 6초 (OneDrive 동기화·웹 서버 읽기 중 잠김)
         try:
-            os.replace(tmp, path); return
+            os.replace(tmp, path); return True
         except PermissionError:
-            time.sleep(0.1)
-    os.replace(tmp, path)
+            time.sleep(0.05 * (1 + i // 10))
+    print(f'  ! {path.name} 교체 실패 (파일 잠김) — 이번 회차는 건너뜀', flush=True)
+    try: tmp.unlink()
+    except OSError: pass
+    return False
 
 def write_csv(name, fields, rows):
     def w(p):
@@ -107,12 +110,37 @@ def classify(row, rules):
     return ('critical' if critical else 'warning' if flags else 'normal'), flags
 
 
+def repair_history_tail():
+    """이전 실행이 덧붙이는 도중 멈췄다면(Ctrl+C 등) 줄바꿈 없이 끝난 마지막 줄을 잘라 냄."""
+    p = OUT / 'sensor_history.csv'
+    with p.open('rb+') as f:
+        f.seek(0, 2)
+        size = f.tell()
+        if size == 0:
+            return
+        f.seek(size - 1)
+        if f.read(1) == b'\n':
+            return
+        pos = size - 1
+        while pos > 0:                       # 마지막 줄바꿈 위치 찾기
+            step = min(4096, pos)
+            f.seek(pos - step)
+            chunk = f.read(step)
+            k = chunk.rfind(b'\n')
+            if k >= 0:
+                f.truncate(pos - step + k + 1)
+                print('  sensor_history.csv 끝의 잘린 줄을 정리했습니다.', flush=True)
+                return
+            pos -= step
+
+
 # ---------------- 시뮬레이터 ----------------
 class Simulator:
     def __init__(self, seed, incident_rate):
         self.R = random.Random(seed)
         self.rate = incident_rate
         self.rules = load_rules()
+        repair_history_tail()
         self.tanks = read_csv('tanks.csv')
         self.history = read_csv('sensor_history.csv')
         self.alerts = [dict(a, is_active=to_bool(a['is_active']), ended_at=a['ended_at'] or None,
@@ -287,7 +315,12 @@ def main():
     n = 0
     try:
         while True:
-            s = sim.save(sim.tick())
+            try:
+                s = sim.save(sim.tick())
+            except OSError as e:             # 파일 잠김 등: 멈추지 않고 다음 회차에 다시 시도
+                print(f'  ! 저장 실패, 다음 회차에 다시 시도: {e}', flush=True)
+                time.sleep(args.interval)
+                continue
             n += 1
             print(f"[{datetime.now():%H:%M:%S}] {s['timestamp']}  전력 {s['known_total_power_w']} W  "
                   f"수온 {s['average_temperature_c']}  이상 {s['abnormal_devices']}대", flush=True)

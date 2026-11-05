@@ -176,6 +176,11 @@
     .data-table-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: auto; max-height: 460px; }
     .data-table-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 14px 6px; font-size: 13px; font-weight: 600; }
     .data-table-title span { font-size: 11px; font-weight: 400; color: var(--muted); }
+    .data-table-title .export-btns { display: inline-flex; gap: 4px; margin-left: auto; }
+    .export-btns button { font-size: 10px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--bg-deep);
+      color: var(--soft); cursor: pointer; font-weight: 600; }
+    .export-btns button:hover { border-color: var(--blue); color: var(--text); }
+    .export-btns button:disabled { opacity: .5; cursor: wait; }
     .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .data-table th, .data-table td { padding: 7px 12px; border-top: 1px solid var(--line); text-align: right; white-space: nowrap; }
     .data-table th { position: sticky; top: 0; background: var(--bg-deep); color: var(--muted); font-weight: 500; z-index: 1; }
@@ -340,6 +345,7 @@
     const fmtTime = iso => iso ? new Date(iso).toLocaleString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" }) : "—";
     const fmtShort = iso => {
       const d = new Date(iso);
+      if (!iso || isNaN(d.getTime())) return "—";
       const p = n => String(n).padStart(2, "0");
       // Asia/Seoul 고정 표시 (+09:00)
       const k = new Date(d.getTime() + 9 * 3600e3);
@@ -424,24 +430,30 @@
     function mergeRecentHistory(recent) {
       if (!state.history || !recent?.length) return;
       const oldest = recent.reduce((m, r) => r.timestamp < m ? r.timestamp : m, recent[0].timestamp);
-      const gapLimit = new Date(oldest).getTime() - 5 * 60 * 1000;
+      const newest = recent.reduce((m, r) => r.timestamp > m ? r.timestamp : m, recent[0].timestamp);
+      const gapLimit = Date.parse(oldest) - 5 * 60 * 1000;
       for (const rows of state.history.values()) {
         const last = rows[rows.length - 1];
-        if (last && new Date(last.ts).getTime() < gapLimit) {   // 너무 오래 놓쳤으면 CSV 전체를 다시 읽음
-          state.history = null; state.historyLoading = null;
-          loadHistory().then(render).catch(() => {});
-          return;
-        }
+        // 너무 오래 놓쳤거나(간격), 데이터가 과거로 돌아갔으면(재생성·재시작) CSV 전체를 다시 읽음
+        if (last && (Date.parse(last.ts) < gapLimit || last.ts > newest)) { reloadHistory(); return; }
       }
       for (const r of recent) {
         if (!state.history.has(r.tank_id)) state.history.set(r.tank_id, []);
         const rows = state.history.get(r.tank_id);
-        const last = rows[rows.length - 1];
-        if (last && r.timestamp <= last.ts) continue;
-        rows.push({ ts: r.timestamp, temperature_c: r.temperature_c, water_level_pct: r.water_level_pct,
-                    turbidity_ntu: r.turbidity_ntu, power_w: r.power_w, status: r.status });
+        const row = { ts: r.timestamp, temperature_c: r.temperature_c, water_level_pct: r.water_level_pct,
+                      turbidity_ntu: r.turbidity_ntu, power_w: r.power_w, status: r.status };
+        // 같은 시각이 이미 있으면 덮어씀 (CSV를 쓰는 도중 읽어 잘린 행이 남아 있어도 바로잡힘)
+        let i = rows.length - 1;
+        while (i >= 0 && rows[i].ts > row.ts) i--;
+        if (i >= 0 && rows[i].ts === row.ts) rows[i] = row;
+        else rows.splice(i + 1, 0, row);
         if (rows.length > HISTORY_KEEP) rows.splice(0, rows.length - HISTORY_KEEP);
       }
+    }
+    function reloadHistory() {
+      state.history = null; state.historyLoading = null;
+      loadHistory().then(() => { state.historyError = null; renderKeepScroll(); })
+        .catch(err => { state.historyError = err.message; renderKeepScroll(); });
     }
 
     // sensor_history.csv (약 7MB) — 상세 보기에서 처음 필요할 때 한 번만 읽음
@@ -449,10 +461,13 @@
       if (state.history) return Promise.resolve(state.history);
       if (state.historyLoading) return state.historyLoading;
       state.historyLoading = (async () => {
+       try {
         const res = await fetch("./sensor_history.csv", { cache: "no-store" });
         if (!res.ok) throw new Error("sensor_history.csv 를 읽을 수 없습니다.");
         const text = (await res.text()).replace(/^﻿/, "");
         const lines = text.split(/\r?\n/);
+        // 시뮬레이터가 덧붙이는 중에 읽었다면 마지막 줄은 잘렸을 수 있으므로 버림
+        if (!/\n$/.test(text)) lines.pop();
         const head = lines[0].split(",");
         const idx = Object.fromEntries(head.map((h, i) => [h, i]));
         const num = s => s === "" || s == null ? null : Number(s); // 빈값은 결측 (0 아님)
@@ -460,6 +475,7 @@
         for (let i = 1; i < lines.length; i++) {
           if (!lines[i]) continue;
           const c = lines[i].split(",");
+          if (c.length !== head.length) continue;   // 깨진 행 무시
           const row = {
             ts: c[idx.timestamp],
             temperature_c: num(c[idx.temperature_c]),
@@ -472,9 +488,17 @@
           if (!map.has(id)) map.set(id, []);
           map.get(id).push(row);
         }
-        for (const rows of map.values()) rows.sort((a, b) => a.ts < b.ts ? -1 : 1);
+        for (const [id, rows] of map) {
+          rows.sort((a, b) => a.ts < b.ts ? -1 : 1);
+          // 시뮬레이터는 CSV를 가끔만 7일치로 자르므로 화면에서도 같은 길이로 맞춤
+          if (rows.length > HISTORY_KEEP) map.set(id, rows.slice(-HISTORY_KEEP));
+        }
         state.history = map;
         return map;
+       } catch (e) {
+        state.historyLoading = null;   // 실패하면 다음 호출 때 다시 시도
+        throw e;
+       }
       })();
       return state.historyLoading;
     }
@@ -568,7 +592,7 @@
     }
 
     function badgeHtml(status, long = false) {
-      return `<span class="badge ${status}">${(long ? STATUS_LONG : STATUS_LABEL)[status] ?? status}</span>`;
+      return `<span class="badge ${esc(status)}">${esc((long ? STATUS_LONG : STATUS_LABEL)[status] ?? status)}</span>`;
     }
 
     function selectTank(id) {
@@ -731,6 +755,19 @@
       });
     }
 
+    // 표 제목 옆 내보내기 버튼 (클릭 처리는 export.js). report=true 면 전체 보고서(엑셀 여러 시트) 버튼 추가
+    function exportBtns(kind, report = false) {
+      return `<span class="export-btns" data-export="${kind}"><button type="button" data-fmt="csv" title="CSV (엑셀에서 한글 깨짐 없이 열림)">CSV</button>` +
+        `<button type="button" data-fmt="xlsx" title="엑셀 파일 (.xlsx)">엑셀</button>` +
+        (report ? `<button type="button" data-fmt="report" title="수조별 측정값·일별 전력량·경고 이력을 시트별로 담은 엑셀 보고서">전체 보고서</button>` : "") + `</span>`;
+    }
+
+    // 데이터를 새로 읽을 때마다 호출되는 함수 목록 (notify.js 등이 등록)
+    const dataListeners = [];
+    function notifyDataListeners() {
+      for (const f of dataListeners) { try { f(); } catch (e) { console.error(e); } }
+    }
+
     // 그래프 4개(수온·수위·탁도·전력)와 같은 값을 표로 표시
     function renderGlobalTable() {
       const wrap = document.getElementById("globalTable");
@@ -753,7 +790,8 @@
       const alertCell = t => { const n = activeCount(t.tank_id); return `<td class="${n ? "active-alert" : "zero"}">${n}</td>`; };
       const totalKwh = state.history ? [...state.history.values()].reduce((a, rows) => a + energyKwh(rows), 0).toFixed(2) : "…";
       wrap.innerHTML = `
-        <div class="data-table-title">수조별 측정값 <span>주황 = 주의 · 빨강 = 위험 (판정 기준 = 그래프 점선) · 행 클릭 시 상세 보기</span></div>
+        <div class="data-table-title">수조별 측정값 <span>주황 = 주의 · 빨강 = 위험 (판정 기준 = 그래프 점선) · 행 클릭 시 상세 보기</span>
+          ${exportBtns("global", true)}</div>
         <table class="data-table">
           <thead><tr><th class="l">수조</th><th class="l">위치</th><th class="l">상태</th>${cols.map(m => `<th>${m.label} (${m.unit})</th>`).join("")}<th>누적 전력량 (kWh)</th><th>진행 중 경고</th></tr></thead>
           <tbody>${tanks.map(t => `
@@ -800,7 +838,7 @@
           <div class="detail-meta">
             측정 시각: ${fmtTime(t.timestamp)} · 마지막 정상 통신: ${fmtTime(t.last_seen)}<br/>
             장비 ID: ${esc(t.device_id)} · 수조 ID: ${esc(t.tank_id)} · 장비 상태: ${stateLabel}<br/>
-            정격 전력 ${t.rated_power_w ?? "—"} W · 설정 주파수 ${t.ultrasonic_frequency_khz ?? "—"} kHz<br/>
+            정격 전력 ${esc(t.rated_power_w ?? "—")} W · 설정 주파수 ${esc(t.ultrasonic_frequency_khz ?? "—")} kHz<br/>
             누적 전력량(전체 기록): <b>${state.history?.has(t.tank_id) ? energyKwh(state.history.get(t.tank_id)).toFixed(2) + " kWh" : "—"}</b>
           </div>
         </div>
@@ -820,7 +858,7 @@
             <span class="inline-pill">🤖 수질 패턴 분석</span>
             <span class="inline-pill">⚙️ 자동 운전 모드 연계</span>
             <div class="alert-hint">
-              예) 수위 ${state.thresholds?.water_level_pct?.warning_below ?? 60}% 미만 또는 탁도 ${state.thresholds?.turbidity_ntu?.warning_above ?? 5} NTU 초과가 10분 지속 →<br/>
+              예) 수위 ${esc(state.thresholds?.water_level_pct?.warning_below ?? 60)}% 미만 또는 탁도 ${esc(state.thresholds?.turbidity_ntu?.warning_above ?? 5)} NTU 초과가 10분 지속 →<br/>
               &nbsp;· 방오 장비 출력 조정<br/>&nbsp;· 수질 관리 담당자에게 앱 알림 발송
             </div>
           </div>
@@ -840,7 +878,7 @@
       const nowMs = new Date(state.snapshot).getTime();
       const active = rows.filter(a => a.is_active).length;
       wrap.innerHTML = `
-        <div class="data-table-title">${esc(t.tank_name)} 경고 ${rows.length}건 <span>진행 중 ${active}건 · 해제 ${rows.length - active}건</span></div>
+        <div class="data-table-title">${esc(t.tank_name)} 경고 ${rows.length}건 <span>진행 중 ${active}건 · 해제 ${rows.length - active}건</span>${exportBtns("alerts")}</div>
         <table class="data-table">
           <thead><tr><th class="l">이벤트</th><th class="l">내용</th><th class="l">심각도</th><th class="l">시작</th><th class="l">종료</th><th>지속 시간</th></tr></thead>
           <tbody>${rows.map(a => `
@@ -869,10 +907,11 @@
       });
       const total = days.reduce((a, d) => a + d.kwh, 0);
       wrap.innerHTML = `
+        <div class="data-table-title">${esc(t.tank_name)} 일별 전력량 ${exportBtns("daily")}</div>
         <table class="data-table">
           <thead><tr><th class="l">날짜</th><th>기록 시점</th><th>평균 전력 (W)</th><th>전력량 (kWh)</th></tr></thead>
           <tbody>${days.slice().reverse().map(d => `
-            <tr><td class="l">${d.date}${d.points < 288 ? " (일부)" : ""}</td>
+            <tr><td class="l">${esc(d.date)}${d.points < 288 ? " (일부)" : ""}</td>
               <td class="${d.received < d.points ? "active-alert" : ""}">${d.received}/${d.points}</td>
               <td>${fmt(d.avgW, 1)}</td><td>${d.kwh.toFixed(3)}</td></tr>`).join("")}
           </tbody>
@@ -943,7 +982,7 @@
       const abnormal = rows.filter(r => r.status && r.status !== "normal").length;
       wrap.innerHTML = `
         <div class="data-table-title">${esc(t.tank_name)} 시간별 측정값
-          <span>그래프와 같은 기간 · 최신순 · 정상 외 ${abnormal}개 시점 · 주황 = 주의 · 빨강 = 위험</span></div>
+          <span>그래프와 같은 기간 · 최신순 · 정상 외 ${abnormal}개 시점 · 주황 = 주의 · 빨강 = 위험</span>${exportBtns("history")}</div>
         <table class="data-table">
           <thead><tr><th class="l">측정 시각</th><th class="l">상태</th>${cols.map(m => `<th>${m.label} (${m.unit})</th>`).join("")}</tr></thead>
           <tbody>${rows.slice().reverse().map(r => `
@@ -1027,6 +1066,7 @@
       try {
         const before = state.snapshot;
         await loadDashboard();
+        notifyDataListeners();
         if (state.snapshot !== before) {
           live.lastChange = Date.now();
           renderKeepScroll();
@@ -1061,6 +1101,7 @@
     (async () => {
       try {
         await loadDashboard();
+        notifyDataListeners();   // 첫 호출: 알림 기준선(이미 있던 경고는 알리지 않음)
         // ?tank=TANK-006 으로 특정 수조 상세를 바로 열 수 있음
         const q = new URLSearchParams(location.search).get("tank");
         if (q && state.tanks.some(t => t.tank_id === q)) { state.selectedId = q; state.view = "detail"; syncViewButtons(); }
@@ -1082,5 +1123,7 @@
     })();
   </script>
   <script src="./chatbot.js"></script>
+  <script src="./notify.js"></script>
+  <script src="./export.js"></script>
 </body>
 </html>

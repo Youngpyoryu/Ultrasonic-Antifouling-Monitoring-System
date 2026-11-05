@@ -130,7 +130,7 @@
     return null;
   }
   function parseTopN(q) {
-    const m = q.match(/(?:상위|하위|top)\s*(\d+)|(\d+)\s*(?:개|곳|위|대)(?!\s*월)/i);
+    const m = q.match(/(?:상위|하위|top)\s*(\d+)|(\d+)\s*(?:개|곳|위)(?!\s*월)/i);
     return m ? Math.min(30, +(m[1] || m[2])) : null;
   }
   // 기간: {label, test(row)} 또는 null(=현재값)
@@ -165,10 +165,11 @@
     // ID: TANK-006, US-006, 6번
     const ids = new Set();
     for (const m of q.matchAll(/(?:tank|us)\s*-?\s*0*(\d{1,3})/gi)) ids.add(`TANK-${m[1].padStart(3, "0")}`);
-    for (const m of q.matchAll(/(\d{1,3})\s*번/g)) ids.add(`TANK-${m[1].padStart(3, "0")}`);
+    for (const m of q.matchAll(/(\d{1,3})\s*번(?!\s*째)/g)) ids.add(`TANK-${m[1].padStart(3, "0")}`);
     let found = tanks.filter(t => ids.has(t.tank_id));
     // 전체 이름
-    const named = tanks.filter(t => nq.includes(norm(t.tank_name)))
+    // 사용자가 '수조', 'A' 같은 짧거나 흔한 이름으로 등록한 장비가 질문을 가로채지 않도록 제외
+    const named = tanks.filter(t => { const n = norm(t.tank_name); return n.length >= 2 && !STOP.has(n) && nq.includes(n); })
       .filter((t, _, arr) => !arr.some(o => o !== t && norm(o.tank_name).includes(norm(t.tank_name))));
     found = [...new Set([...found, ...named])];
     if (found.length) return { tanks: sortByPosition(found, nq) };
@@ -195,8 +196,8 @@
   // ---------------- 답변 ----------------
   function answer(q) {
     const nq = q.toLowerCase();
-    if (/^(도움|도움말|help|\?|뭐|무엇)|뭘\s*물어|무엇을\s*물어|사용법|어떻게\s*써/.test(nq)) return helpHtml(false);
-    if (/^(안녕|하이|hello|hi)\b/.test(nq)) return `<p>안녕하세요! 수조 상태, 측정값, 전력량, 경고에 대해 물어보세요.</p>` + helpHtml(false, true);
+    if (/^(도움말?|help|\?)\s*[?!.]*$|뭘\s*물어|무엇을\s*물어|뭐\s*물어|사용법|어떻게\s*(써|사용)/.test(nq)) return helpHtml(false);
+    if (/^(안녕|하이)|^(hello|hi)\b/.test(nq)) return `<p>안녕하세요! 수조 상태, 측정값, 전력량, 경고에 대해 물어보세요.</p>` + helpHtml(false, true);
 
     const { tanks, ambiguous, word } = parseTanks(q);
     if (ambiguous) return `<p>'${esc(word)}'(이)가 들어간 수조가 여러 개입니다. 어느 수조인가요?</p><ul>${ambiguous.map(t => `<li>${tankLink(t)}</li>`).join("")}</ul>`;
@@ -204,8 +205,9 @@
     const period = parsePeriod(q);
     const agg = parseAgg(q);
 
-    if (/기준|판정|임계|threshold/i.test(q)) return thresholdsHtml(metric);
-    if (/경고|알림|알람|이벤트|이력/.test(q)) return alertsHtml(tanks, /이력|지난|해제|끝난|모든|전체|과거/.test(q) || !!period);
+    // '기준'은 '어제 기준'처럼 흔히 쓰이므로 판정 기준을 묻는 경우만
+    if (/판정\s*기준|임계|기준값|기준치|threshold/i.test(q) || (/기준/.test(q) && !period && !agg && !/시각|시점|현재|지금/.test(q))) return thresholdsHtml(metric);
+    if (/경고|알림|알람|이벤트/.test(q) || (/이력/.test(q) && !metric)) return alertsHtml(tanks, /이력|지난|해제|끝난|모든|전체|과거/.test(q) || !!period);
     if (/일별|날짜별|하루하루|매일/.test(q) && (metric === "energy" || metric === "power_w" || !metric)) return dailyHtml(tanks);
 
     if (tanks.length >= 2) return compareHtml(tanks, metric, period);
@@ -246,8 +248,9 @@
     else if (/정지/.test(q)) want = "stopped";
     const list = want === "stopped" ? state.tanks.filter(t => t.device_state === "stopped")
       : state.tanks.filter(t => (want || ["warning", "critical", "offline"]).includes(t.status));
+    const noData = state.tanks.filter(t => t.status === "nodata").length;
     const head = `<p>기준 시각 ${esc(fmtTime(state.snapshot))} · 장비 ${s.total}대 중 정상 ${state.tanks.filter(t => t.status === "normal").length}대,
-      주의 ${s.warning}대, 위험 ${s.critical}대, 통신 끊김 ${s.offline}대입니다.</p>`;
+      주의 ${s.warning}대, 위험 ${s.critical}대, 통신 끊김 ${s.offline}대${noData ? `, 데이터 없음(새로 등록) ${noData}대` : ""}입니다.</p>`;
     if (!list.length) return head + `<p>${want ? "해당 상태의 수조가 없습니다." : "이상이 있는 수조가 없습니다. 모두 정상입니다."}</p>`;
     return head + `<p>${want ? "해당" : "이상"} 수조 ${list.length}곳:</p><ul>${list.map(t => {
       const codes = t.alert_codes ? t.alert_codes.split("|").map(c => ALERT_LABEL[c] ?? c).join(", ") : "";
@@ -322,9 +325,8 @@
   }
   function dailyHtml(tanks) {
     const wait = needHistory(); if (wait) return wait;
-    if (tanks.length === 1) {
-      const days = dailyEnergy(state.history.get(tanks[0].tank_id) || []);
-      return `<p>${tankLink(tanks[0])}의 일별 전력량입니다.</p>${dailyTable(days)}`;
+    if (tanks.length >= 1) {
+      return tanks.map(t => `<p>${tankLink(t)}의 일별 전력량입니다.</p>${dailyTable(dailyEnergy(state.history.get(t.tank_id) || []))}`).join("");
     }
     const all = [];
     for (const rows of state.history.values()) all.push(...rows);
