@@ -66,6 +66,12 @@
     }
     .device-item:hover { background: var(--panel); }
     .device-item.active { background: #1e293b; border-color: var(--blue); }
+    .device-del { background: none; border: 1px solid transparent; color: var(--muted); border-radius: 6px; width: 24px; height: 24px;
+      flex-shrink: 0; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+    .device-del:hover { color: var(--critical); border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.1); }
+    .btn-delete-device { margin-left: auto; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+      background: rgba(239,68,68,.1); color: var(--critical); border: 1px solid rgba(239,68,68,.45); }
+    .btn-delete-device:hover { background: rgba(239,68,68,.2); }
     .device-main { min-width: 0; }
     .device-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .device-location { font-size: 11px; color: var(--muted); }
@@ -398,7 +404,7 @@
       const data = await res.json();
       // 화면에서 직접 등록한 장비(파일에 없음)는 갱신 후에도 유지
       const ids = new Set(data.tanks.map(t => t.tank_id));
-      const local = state.tanks.filter(t => t.status === "nodata" && !ids.has(t.tank_id));
+      const local = state.tanks.filter(t => t.user_added && !ids.has(t.tank_id));
       state.tanks = [...data.tanks.map(t => ({ ...t })), ...local];
       state.alerts = data.alerts.filter(a => a.is_active);
       state.thresholds = data.thresholds;
@@ -614,8 +620,27 @@
             <div class="device-location">${esc(t.location)} · ${esc(t.device_id)}</div>
           </div>
           ${badgeHtml(t.status)}
+          ${t.user_added ? `<button type="button" class="device-del" data-del="${esc(t.tank_id)}" title="이 장비 삭제" aria-label="${esc(t.tank_name)} 삭제">🗑</button>` : ""}
         </div>`).join("");
-      wrap.querySelectorAll(".device-item").forEach(el => el.onclick = () => selectTank(el.dataset.id));
+      wrap.querySelectorAll(".device-item").forEach(el => el.onclick = e => {
+        const del = e.target.closest("[data-del]");
+        if (del) { e.stopPropagation(); deleteDevice(del.dataset.del); return; }
+        selectTank(el.dataset.id);
+      });
+    }
+
+    // 화면에서 등록한 장비만 삭제 가능 (데이터 파일의 장비는 다음 갱신 때 다시 나타나므로 대상 아님)
+    function deleteDevice(id) {
+      const t = state.tanks.find(x => x.tank_id === id);
+      if (!t || !t.user_added) return;
+      if (!confirm(`'${t.tank_name}' (${t.device_id}) 장비를 삭제할까요?`)) return;
+      state.tanks = state.tanks.filter(x => x.tank_id !== id);
+      if (state.selectedId === id) {
+        state.selectedId = state.tanks[0]?.tank_id ?? null;
+        if (!state.selectedId) state.view = "global";
+        syncViewButtons();
+      }
+      render();
     }
 
     function renderTopSummary() {
@@ -832,7 +857,8 @@
 
       panel.innerHTML = `
         <div class="detail-main">
-          <h3>${esc(t.tank_name)} ${badgeHtml(t.status)}</h3>
+          <h3>${esc(t.tank_name)} ${badgeHtml(t.status)}
+            ${t.user_added ? `<button type="button" class="btn-delete-device" id="btnDeleteDevice">🗑 장비 삭제</button>` : ""}</h3>
           <p>${esc(t.location)} · 탱크 용량 약 ${t.capacity_l ? Number(t.capacity_l).toLocaleString() : "—"} L${t.description ? " · " + esc(t.description) : ""}</p>
           <div class="detail-grid">${order.map(metricBox).join("")}</div>
           <div class="detail-meta">
@@ -864,6 +890,7 @@
           </div>
         </div>`;
 
+      document.getElementById("btnDeleteDevice")?.addEventListener("click", () => deleteDevice(t.tank_id));
       renderAlertHistory(t);
       renderHistory(t);
     }
@@ -1027,7 +1054,8 @@
         tank_id: "TANK-" + no, device_id: "US-" + no, tank_name: name, location: loc || "미지정 위치",
         description: "", capacity_l: null, rated_power_w: null, ultrasonic_frequency_khz: null,
         timestamp: null, temperature_c: null, water_level_pct: null, turbidity_ntu: null, power_w: null,
-        is_online: false, device_state: "unknown", status: "nodata", alert_codes: "", last_seen: null
+        is_online: false, device_state: "unknown", status: "nodata", alert_codes: "", last_seen: null,
+        user_added: true
       });
       document.getElementById("inputName").value = "";
       document.getElementById("inputLocation").value = "";
