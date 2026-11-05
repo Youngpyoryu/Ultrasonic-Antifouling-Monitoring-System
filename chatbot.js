@@ -202,7 +202,9 @@
     const { tanks, ambiguous, word } = parseTanks(q);
     if (ambiguous) return `<p>'${esc(word)}'(이)가 들어간 수조가 여러 개입니다. 어느 수조인가요?</p><ul>${ambiguous.map(t => `<li>${tankLink(t)}</li>`).join("")}</ul>`;
     // AI(Isolation Forest) 판단 — '이상 있는 수조'(규칙 판정)와 구분해 AI·점수·이상치를 말한 경우만
-    if (/(?<![a-z])ai(?![a-z])|인공\s*지능|머신\s*러닝|isolation|아이솔레이션|iforest|이상\s*점수|이상치|이상\s*탐지|평소와\s*다른/i.test(q)) return aiHtml(tanks);
+    //   '이상 탐지 기준'·'AI 경고'처럼 기준·경고를 묻는 질문은 기존 답변으로
+    if (/(?<![a-z])ai(?![a-z])|인공\s*지능|머신\s*러닝|isolation|아이솔레이션|iforest|이상\s*점수|이상치|이상\s*탐지|평소와\s*다른/i.test(q)
+        && !/기준|임계|경고|알림|알람/.test(q)) return aiHtml(tanks);
     const metric = parseMetric(q);
     const period = parsePeriod(q);
     const agg = parseAgg(q);

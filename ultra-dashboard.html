@@ -981,7 +981,7 @@
       if (!state.history) note.textContent = "시간별 기록(sensor_history.csv)을 불러오는 중…";
       let map;
       try { map = await loadHistory(); }
-      catch (e) { note.textContent = e.message; return; }
+      catch (e) { note.textContent = e.message; window.renderAIDetail?.(t, []); return; }
       if (state.selectedId !== t.tank_id || state.view !== "detail") return; // 로딩 중 선택 변경
 
       const all = map.get(t.tank_id) || [];

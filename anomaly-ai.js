@@ -6,7 +6,7 @@
  *   → 수조마다 크기·설정이 달라도 "평소와 얼마나 다른가"를 하나의 모델로 비교
  * 모델: iforest.js (나무 200그루, 나무당 표본 256개, 범위 검사 포함), seed 고정 → 새로고침해도 같은 결과
  * 판정: 점수 ≥ 0.70 이상, ≥ 0.62 관찰 (원본 7일 기록 검증으로 정한 값)
- *   - 원본 기록 검증: 규칙(thresholds.json) 경고 39개 시점 모두 0.75 이상, 정상 시점의 99.9%는 0.65 미만
+ *   - 원본 기록 검증: 규칙(thresholds.json) 경고 39개 시점 모두 0.70 이상 (최저 약 0.74), 정상 시점의 99.9%는 0.65 미만
  *   - 규칙은 정상인데 0.70 을 넘은 시점은 모두 규칙 경고 직전의 상승 구간 → 조기 감지
  * 실시간: 새 측정값은 같은 모델로 바로 채점(재학습은 '다시 학습' 버튼). 통신 끊김 시점은 판단 불가.
  */
@@ -22,7 +22,8 @@
   const AI_LABEL = { alert: "이상", watch: "관찰", normal: "정상", na: "판단 불가" };
   const AI_BADGE = { alert: "critical", watch: "warning", normal: "normal", na: "offline" };
 
-  const ai = { model: null, stats: new Map(), cache: new Map(), info: null, validation: null, validating: false, version: 0 };
+  // src = 학습에 쓴 기록 Map (기록을 통째로 다시 읽으면 바뀜 → 자동 재학습), failKey = 기록 부족으로 학습 실패한 상태
+  const ai = { model: null, src: null, failKey: null, stats: new Map(), cache: new Map(), info: null, validation: null, validating: false, version: 0 };
 
   const css = `
     #aiPanel .ai-head { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:0 14px 8px; font-size:12px; color:var(--soft); }
@@ -55,7 +56,9 @@
     if (!map || typeof IForest === "undefined") return false;
     const t0 = performance.now();
     const X = [];
+    ai.model = null; ai.src = null;
     ai.stats.clear(); ai.cache.clear();
+    ai.version++;                                   // 진행 중인 검증 취소
     let first = null, last = null;
     for (const [tid, rows] of map) {
       const ok = rows.filter(valid);
@@ -67,15 +70,23 @@
       if (!first || ok[0].ts < first) first = ok[0].ts;
       if (!last || ok.at(-1).ts > last) last = ok.at(-1).ts;
     }
-    if (X.length < 256) return false;
+    if (X.length < 256) { ai.failKey = sizeKey(map); return false; }
+    ai.failKey = null;
     ai.model = IForest.fit(X, OPTIONS);
+    ai.src = map;
     ai.info = { rows: X.length, tanks: ai.stats.size, first, last, ms: Math.round(performance.now() - t0), at: new Date() };
     ai.validation = null;
-    ai.version++;
-    validateAsync(ai.version);
+    // 학습 시점의 기록으로 검증 (검증 도중 실시간으로 추가·삭제되는 행의 영향을 받지 않게 복사)
+    validateAsync(ai.version, new Map([...ai.stats.keys()].map(tid => [tid, map.get(tid).slice()])));
     return true;
   }
-  function ensureModel() { return ai.model || train(); }
+  const sizeKey = map => { let n = 0; for (const r of map.values()) n += r.length; return n + ":" + map.size; };
+  function ensureModel() {
+    if (!state.history) return false;
+    if (ai.model && ai.src === state.history) return true;
+    if (!ai.model && ai.failKey === sizeKey(state.history)) return false;   // 기록이 늘지 않았으면 다시 시도하지 않음
+    return train();
+  }
 
   // 같은 시점·같은 값이면 다시 채점하지 않음
   function score(tid, r) {
@@ -133,19 +144,21 @@
   }
 
   // 원본 기록으로 성능 검증 (화면이 멈추지 않게 수조 하나씩 나눠 계산)
-  function validateAsync(ver) {
+  function validateAsync(ver, snap) {
     ai.validating = true;
-    const ids = [...ai.stats.keys()];
+    const ids = [...snap.keys()];
     const acc = { rulePts: 0, hitPts: 0, aiOnly: 0, aiOnlyEarly: 0, normalPts: 0, events: 0, detected: 0, early: 0, leadSum: 0, leads: [] };
     let i = 0;
     const step = () => {
       if (ver !== ai.version) return;                 // 그 사이 다시 학습됨
       const tid = ids[i++];
       if (tid) {
-        const rows = (state.history.get(tid) || []).filter(valid);
-        const sc = rows.map(r => score(tid, r));
-        const bad = rows.map(r => r.status === "warning" || r.status === "critical");
+        // 수신 없는 행도 그대로 두어(점수 null, 경고 아님) 사건·선행 구간이 그 틈을 넘어 이어지지 않게 함
+        const rows = snap.get(tid);
+        const sc = rows.map(r => valid(r) ? score(tid, r) : null);
+        const bad = rows.map((r, j) => sc[j] != null && (r.status === "warning" || r.status === "critical"));
         for (let j = 0; j < rows.length; j++) {
+          if (sc[j] == null) continue;
           const hit = sc[j] >= LEVEL.alert;
           if (bad[j]) { acc.rulePts++; if (hit) acc.hitPts++; }
           else { acc.normalPts++; if (hit) acc.aiOnly++; }
@@ -157,8 +170,11 @@
           acc.events++;
           if (sc.slice(j, end + 1).some(v => v >= LEVEL.alert)) acc.detected++;
           let k = j - 1, lead = 0;
-          while (k >= 0 && !bad[k] && sc[k] >= LEVEL.alert) { lead++; acc.aiOnlyEarly++; k--; }
-          if (lead) { acc.early++; acc.leadSum += lead * 5; acc.leads.push({ tid, code: rows[j].status, ts: rows[j].ts, min: lead * 5 }); }
+          while (k >= 0 && !bad[k] && sc[k] != null && sc[k] >= LEVEL.alert) { lead++; acc.aiOnlyEarly++; k--; }
+          if (lead) {
+            const min = Math.round((Date.parse(rows[j].ts) - Date.parse(rows[k + 1].ts)) / 60000);   // 실제 시각 차이
+            acc.early++; acc.leadSum += min; acc.leads.push({ tid, code: rows[j].status, ts: rows[j].ts, min });
+          }
           j = end;
         }
         setTimeout(step, 0);
