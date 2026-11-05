@@ -52,7 +52,7 @@
     </section>`);
 
   const EXAMPLES = ["지금 이상 있는 수조", "총 전력량", "수온 가장 높은 수조", "패류 수조 상태",
-                    "산호 전시 수족관 최근 6시간 수온", "어제 전력량 많은 수조", "진행 중 경고", "로비 수족관 vs 메인 전시 수족관"];
+                    "산호 전시 수족관 최근 6시간 수온", "어제 전력량 많은 수조", "진행 중 경고", "AI 이상 점수", "로비 수족관 vs 메인 전시 수족관"];
   const $ = id => document.getElementById(id);
   const log = $("cbLog");
 
@@ -201,6 +201,8 @@
 
     const { tanks, ambiguous, word } = parseTanks(q);
     if (ambiguous) return `<p>'${esc(word)}'(이)가 들어간 수조가 여러 개입니다. 어느 수조인가요?</p><ul>${ambiguous.map(t => `<li>${tankLink(t)}</li>`).join("")}</ul>`;
+    // AI(Isolation Forest) 판단 — '이상 있는 수조'(규칙 판정)와 구분해 AI·점수·이상치를 말한 경우만
+    if (/(?<![a-z])ai(?![a-z])|인공\s*지능|머신\s*러닝|isolation|아이솔레이션|iforest|이상\s*점수|이상치|이상\s*탐지|평소와\s*다른/i.test(q)) return aiHtml(tanks);
     const metric = parseMetric(q);
     const period = parsePeriod(q);
     const agg = parseAgg(q);
@@ -225,6 +227,24 @@
     return `<p>질문을 이해하지 못했어요. 수조 이름, 측정 항목(수온·수위·탁도·전력·전력량), 기간(오늘·어제·최근 6시간·7일)을 넣어 물어봐 주세요.</p>` + helpHtml(false, true);
   }
 
+  function aiHtml(tanks) {
+    const A = window.anomalyAI;
+    if (!A || !A.ready()) return `<p>AI 모델이 아직 준비되지 않았어요. 시간별 기록을 불러온 뒤 다시 물어봐 주세요.</p>`;
+    const L = A.LEVEL;
+    const row = x => `<li>${tankLink(x.t)} — 점수 <b>${x.score == null ? "—" : x.score.toFixed(3)}</b> (${A.AI_LABEL[x.level]})` +
+      `${x.reason ? ` · ${esc(x.reason.text)} <span class="muted">(${esc(x.reason.detail)})</span>` : ""}` +
+      `${x.compare === "early" ? " · <b>규칙 기준은 정상인데 AI는 평소와 다르다고 봄</b> (경고 직전이거나 회복 중일 수 있음)" : x.compare === "miss" ? " · 규칙만 경고" : ""}</li>`;
+    const foot = `<p class="muted">Isolation Forest · 수조마다 평소 값과 비교 · 점수 ≥ ${L.alert} 이상, ≥ ${L.watch} 관찰</p>`;
+    if (tanks.length) return `<p>AI 판단입니다.</p><ul>${tanks.map(t => row(A.assess(t))).join("")}</ul>${foot}`;
+    const all = A.all().filter(x => x.score != null).sort((a, b) => b.score - a.score);
+    const flagged = all.filter(x => x.level !== "normal");
+    const v = A.validation();
+    return (flagged.length
+        ? `<p>AI가 평소와 다르다고 본 수조 <b>${flagged.length}</b>대입니다.</p><ul>${flagged.map(row).join("")}</ul>`
+        : `<p>AI가 보기에 지금은 모든 수조가 평소 범위입니다. 점수가 가장 높은 수조:</p><ul>${all.slice(0, 3).map(row).join("")}</ul>`) +
+      (v ? `<p class="muted">원본 기록 검증: 규칙 경고 ${v.rulePts}개 시점 중 ${v.hitPts}개 감지 · 경고 사건 ${v.events}건 중 ${v.early}건을 평균 ${v.early ? Math.round(v.leadSum / v.early) : 0}분 먼저 감지</p>` : "") + foot;
+  }
+
   function helpHtml(first, short) {
     const ex = `<ul>
       <li><b>상태</b>: 지금 이상 있는 수조 / 패류 수조 상태 / 통신 끊긴 수조</li>
@@ -233,7 +253,8 @@
       <li><b>전력량</b>: 총 전력량 / 어제 전력량 많은 수조 / 로비 수족관 일별 전력량</li>
       <li><b>경고</b>: 진행 중 경고 / 패류 수조 경고 이력</li>
       <li><b>비교</b>: 로비 수족관 vs 메인 전시 수족관 수온</li>
-      <li><b>기준</b>: 수온 판정 기준</li></ul>`;
+      <li><b>기준</b>: 수온 판정 기준</li>
+      <li><b>AI</b>: AI 이상 점수 / 패류 수조 AI 판단</li></ul>`;
     if (short) return ex;
     return `${first ? "<p>안녕하세요! 대시보드 데이터에 대해 물어보세요.</p>" : ""}<p>이렇게 물어볼 수 있어요.</p>${ex}
       <p class="muted">'오늘·어제·최근 N시간'은 데이터의 가장 최근 시각(${esc(fmtTime(latestTs()))}) 기준입니다. 수조 이름을 누르면 상세 화면으로 이동합니다.</p>`;

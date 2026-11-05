@@ -259,6 +259,7 @@
       </section>
 
       <section id="globalTable" class="data-table-wrap"></section>
+      <section id="aiPanel" class="data-table-wrap"></section>
 
       <div class="view-title-row">
         <h2 id="viewTitle">중앙 모니터링 화면</h2>
@@ -290,6 +291,12 @@
           </div>
           <div class="history-note" id="historyNote"></div>
           <div class="data-table-wrap" id="historyTable" style="margin-top:12px;"></div>
+
+          <div class="history-head"><h4>🤖 AI 이상 점수 (Isolation Forest)</h4><span class="history-note" id="aiDetailNote" style="margin:0"></span></div>
+          <div class="energy-grid">
+            <div class="chart-box"><canvas id="aiScoreChart"></canvas></div>
+            <div class="data-table-wrap" id="aiDetailTable"></div>
+          </div>
 
           <div class="history-head"><h4>일별 전력량</h4><span class="history-note" style="margin:0">Σ power_w × (5/60) ÷ 1000 · 하루 288개 시점 기준</span></div>
           <div class="energy-grid">
@@ -677,12 +684,13 @@
       document.getElementById("globalView").style.display = isGlobal ? "block" : "none";
       document.getElementById("globalCharts").style.display = isGlobal ? "grid" : "none";
       document.getElementById("globalTable").style.display = isGlobal ? "block" : "none";
+      document.getElementById("aiPanel").style.display = isGlobal ? "block" : "none";
       document.getElementById("detailView").style.display = isGlobal ? "none" : "block";
       document.getElementById("viewTitle").textContent = isGlobal ? "중앙 모니터링 화면" : "수족관별 상세 화면";
       document.getElementById("viewDesc").textContent = isGlobal
         ? "모든 수족관의 초음파 방오 장비 상태와 수질 요약"
         : "좌측에서 선택한 수족관의 상태 상세와 시간별 변화";
-      if (isGlobal) { renderAlertStrip(); renderGlobalGrid(); renderGlobalCharts(); renderGlobalTable(); }
+      if (isGlobal) { renderAlertStrip(); renderGlobalGrid(); renderGlobalCharts(); renderGlobalTable(); window.renderAIPanel?.(); }
       else renderDetailPanel();
     }
 
@@ -877,6 +885,7 @@
                 ? myAlerts.map(a => `<div class="alert-row"><span>${esc(ALERT_LABEL[a.alert_code] ?? a.alert_code)}</span><span style="color:var(--muted)">${fmtShort(a.started_at)}부터 진행 중</span></div>`).join("")
                 : `<div style="color:var(--muted)">진행 중인 경고 없음</div>`}
             </div>
+            ${aiLine(t)}
           </div>
           <div class="detail-side-block">
             <div class="block-title">AI·알림 설계 메모</div>
@@ -893,6 +902,16 @@
       document.getElementById("btnDeleteDevice")?.addEventListener("click", () => deleteDevice(t.tank_id));
       renderAlertHistory(t);
       renderHistory(t);
+    }
+
+    // 상태 요약 아래 AI 판단 한 줄 (anomaly-ai.js)
+    function aiLine(t) {
+      const A = window.anomalyAI;
+      if (!A?.ready()) return "";
+      const x = A.assess(t);
+      const color = { alert: "var(--critical)", watch: "var(--warning)", normal: "var(--normal)", na: "var(--offline)" }[x.level];
+      return `<div class="alert-row" style="margin-top:8px"><span>🤖 AI 이상 점수 <b style="color:${color}">${x.score == null ? "—" : x.score.toFixed(3)}</b> · ${A.AI_LABEL[x.level]}</span>` +
+        `<span style="color:var(--muted)">${x.reason ? esc(x.reason.text) : x.level === "na" ? "수신 없음" : "평소 범위"}${x.compare === "early" ? " · 규칙은 정상, AI만 감지" : ""}</span></div>`;
     }
 
     // 선택한 수족관의 경고 발생·해제 이력 (alerts.csv)
@@ -956,6 +975,7 @@
         document.getElementById("historyTable").innerHTML = "";
         document.getElementById("dailyEnergyTable").innerHTML = '<div class="empty">기록이 없습니다.</div>';
         charts.dailyEnergy?.destroy(); delete charts.dailyEnergy;
+        window.renderAIDetail?.(t, []);
         return;
       }
       if (!state.history) note.textContent = "시간별 기록(sensor_history.csv)을 불러오는 중…";
@@ -991,6 +1011,7 @@
         });
       });
       renderHistoryTable(t, rows);
+      window.renderAIDetail?.(t, rows);
       renderDailyEnergy(t, all);
     }
 
@@ -1080,7 +1101,7 @@
 
     // 다시 그려도 표 스크롤 위치가 처음으로 돌아가지 않게 보존
     function renderKeepScroll() {
-      const ids = ["globalTable", "historyTable", "dailyEnergyTable", "alertHistory"];
+      const ids = ["globalTable", "aiPanel", "historyTable", "aiDetailTable", "dailyEnergyTable", "alertHistory"];
       const pos = ids.map(id => document.getElementById(id)?.scrollTop ?? 0);
       render();
       const restore = () => ids.forEach((id, i) => { const el = document.getElementById(id); if (el) el.scrollTop = pos[i]; });
@@ -1152,6 +1173,8 @@
       }
     })();
   </script>
+  <script src="./iforest.js"></script>
+  <script src="./anomaly-ai.js"></script>
   <script src="./chatbot.js"></script>
   <script src="./notify.js"></script>
   <script src="./export.js"></script>
