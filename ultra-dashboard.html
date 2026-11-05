@@ -1110,7 +1110,9 @@
         loadHistory()
           .then(() => renderKeepScroll())   // 카드 미니 추이·표 전력량도 기록이 있어야 그려짐
           .catch(err => { state.historyError = err.message; renderTopSummary(); });
-        startLive();
+        // GitHub Pages(정적 호스팅)에서는 브라우저 안 시뮬레이션(demo-sim.js), 로컬에서는 파일 폴링
+        if (window.demoMode?.enabled) demoMode.start();
+        else startLive();
       } catch (e) {
         document.getElementById("content").innerHTML = `
           <div class="error-box">
@@ -1125,5 +1127,6 @@
   <script src="./chatbot.js"></script>
   <script src="./notify.js"></script>
   <script src="./export.js"></script>
+  <script src="./demo-sim.js"></script>
 </body>
 </html>
