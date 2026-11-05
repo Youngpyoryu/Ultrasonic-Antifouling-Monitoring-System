@@ -1,0 +1,6 @@
+﻿event_id,tank_id,device_id,alert_code,severity,started_at,ended_at,is_active,is_synthetic
+EVT-0001,TANK-006,US-006,temperature_out_of_range,warning,2026-11-03T15:45:00+09:00,,True,True
+EVT-0002,TANK-012,US-012,low_water_level,warning,2026-11-03T15:10:00+09:00,,True,True
+EVT-0003,TANK-018,US-018,high_turbidity,warning,2026-11-03T15:05:00+09:00,,True,True
+EVT-0004,TANK-024,US-024,device_stopped,critical,2026-11-03T15:05:00+09:00,,True,True
+EVT-0005,TANK-030,US-030,communication_lost,offline,2026-11-03T15:35:00+09:00,,True,True

@@ -1,0 +1,29 @@
+{
+  "temperature_c": {
+    "warning_below": 20,
+    "warning_above": 28,
+    "critical_below_or_equal": 18,
+    "critical_above_or_equal": 30
+  },
+  "water_level_pct": {
+    "warning_below": 60,
+    "critical_below": 40
+  },
+  "turbidity_ntu": {
+    "warning_above": 5,
+    "critical_above_or_equal": 10
+  },
+  "power_w": {
+    "warning_below": 15,
+    "warning_above": 130,
+    "critical_above_or_equal": 150
+  },
+  "offline": {
+    "missing_sensor_packet": true
+  },
+  "device_stopped": {
+    "power_w_equals": 0,
+    "severity": "critical"
+  },
+  "note": "교육용 임의 기준. 실제 설치 기준으로 사용하지 마세요."
+}

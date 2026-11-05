@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ultrasonic Antifouling Monitoring System</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a; --bg-deep: #020617; --panel: #111827; --line: #1f2937; --line-2: #374151;
+      --text: #e5e7eb; --muted: #9ca3af; --soft: #cbd5e1;
+      --normal: #22c55e; --warning: #f59e0b; --critical: #ef4444; --offline: #94a3b8; --blue: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "맑은 고딕", sans-serif;
+    }
+
+    /* ---------- header ---------- */
+    header {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 14px 20px; background: var(--bg-deep); border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; z-index: 20;
+    }
+    .logo-title { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .logo-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--normal); box-shadow: 0 0 12px rgba(34,197,94,.8); }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+    .view-toggle { display: flex; background: var(--panel); border: 1px solid var(--line-2); border-radius: 999px; padding: 2px; }
+    .view-toggle button {
+      border: none; background: transparent; color: var(--muted); font-size: 11px; padding: 5px 12px;
+      border-radius: 999px; cursor: pointer;
+    }
+    .view-toggle button.active { background: var(--blue); color: #fff; font-weight: 600; }
+    #headerSummary b { color: var(--text); }
+    #headerSummary .bad { color: var(--warning); }
+    .live-status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); background: var(--bg-deep);
+      border: 1px solid var(--line-2); border-radius: 999px; padding: 4px 10px; cursor: pointer; user-select: none; white-space: nowrap; }
+    .live-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); }
+    .live-status.on .dot { background: var(--normal); box-shadow: 0 0 0 0 rgba(34,197,94,.6); animation: livePulse 1.6s infinite; }
+    .live-status.idle .dot { background: var(--warning); }
+    .live-status.error .dot { background: var(--critical); }
+    .live-status.paused .dot { background: var(--offline); }
+    @keyframes livePulse { 70% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+    .header-add-device { display: flex; align-items: center; gap: 6px; }
+    .header-add-device input {
+      height: 28px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line-2);
+      background: var(--bg-deep); color: var(--text); font-size: 11px; min-width: 130px;
+    }
+    .header-add-device button {
+      height: 28px; padding: 0 12px; border-radius: 999px; border: none; cursor: pointer;
+      background: linear-gradient(90deg, #22c55e, #3b82f6); color: var(--bg-deep); font-weight: 600; font-size: 11px;
+    }
+
+    /* ---------- layout ---------- */
+    main { display: flex; min-height: calc(100vh - 57px); }
+    .sidebar {
+      width: 260px; flex-shrink: 0; background: var(--bg-deep); border-right: 1px solid var(--line);
+      padding: 14px 10px; position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto;
+    }
+    .sb-section-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 4px 8px; display: flex; justify-content: space-between; }
+    .device-list { display: flex; flex-direction: column; gap: 4px; }
+    .device-item {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+    }
+    .device-item:hover { background: var(--panel); }
+    .device-item.active { background: #1e293b; border-color: var(--blue); }
+    .device-main { min-width: 0; }
+    .device-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .device-location { font-size: 11px; color: var(--muted); }
+
+    .badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+    .badge.normal   { background: rgba(34,197,94,.15);  color: var(--normal);   border: 1px solid rgba(34,197,94,.4); }
+    .badge.warning  { background: rgba(245,158,11,.15); color: var(--warning);  border: 1px solid rgba(245,158,11,.4); }
+    .badge.critical { background: rgba(239,68,68,.15);  color: var(--critical); border: 1px solid rgba(239,68,68,.4); }
+    .badge.offline, .badge.nodata { background: rgba(148,163,184,.12); color: var(--offline); border: 1px dashed rgba(148,163,184,.5); }
+
+    .content { flex: 1; min-width: 0; padding: 16px 20px 32px; }
+
+    /* ---------- summary ---------- */
+    .top-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+    .summary-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .summary-label { font-size: 12px; color: var(--muted); }
+    .summary-main { display: flex; align-items: baseline; gap: 4px; margin: 4px 0 2px; }
+    .summary-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .summary-unit { font-size: 13px; color: var(--muted); }
+    .summary-sub { font-size: 11px; color: var(--muted); }
+
+    /* ---------- charts ---------- */
+    .charts-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .chart-box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; height: 240px; position: relative; }
+    .chart-box canvas { width: 100% !important; height: 100% !important; }
+
+    .view-title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 6px 0 10px; }
+    .view-title-row h2 { font-size: 16px; margin: 0; }
+    .view-title-row span { font-size: 12px; color: var(--muted); }
+    .snapshot { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+    /* ---------- alerts strip ---------- */
+    .alert-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .alert-chip {
+      display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+      background: var(--panel); border: 1px solid var(--line); cursor: pointer;
+    }
+    .alert-chip:hover { border-color: var(--line-2); }
+    .alert-chip .t { color: var(--muted); font-size: 11px; }
+
+    /* ---------- device grid ---------- */
+    .grid-devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+    .device-card {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer;
+      transition: border-color .15s, transform .15s;
+    }
+    .device-card:hover { border-color: var(--blue); transform: translateY(-1px); }
+    .device-card.warning { border-left: 3px solid var(--warning); }
+    .device-card.critical { border-left: 3px solid var(--critical); }
+    .device-card.offline { border-left: 3px dashed var(--offline); }
+    .device-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+    .device-card-name { font-size: 14px; font-weight: 600; }
+    .device-card-location { font-size: 11px; color: var(--muted); }
+    .metrics-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .metric-pill { display: flex; justify-content: space-between; background: var(--bg-deep); border-radius: 6px; padding: 5px 8px; font-size: 11px; }
+    .metric-label { color: var(--muted); }
+    .metric-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .metric-value.warning { color: var(--warning); }
+    .metric-value.critical { color: var(--critical); }
+    .metric-value.na { color: var(--offline); font-weight: 400; }
+    .card-foot { font-size: 10px; color: var(--muted); margin-top: 8px; }
+    .metric-pill { flex-wrap: wrap; row-gap: 2px; }
+    .spark { display: block; width: 100%; height: 18px; flex-basis: 100%; }
+    .card-energy { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 8px; }
+    .card-energy b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+    /* ---------- 수족관별 일별 전력량 / 경고 이력 ---------- */
+    .energy-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 10px; }
+    .energy-grid .chart-box { height: 260px; }
+    .energy-grid .data-table-wrap { margin-bottom: 0; max-height: 260px; }
+    .data-table td.active-alert { color: var(--warning); font-weight: 600; }
+    .data-table td.zero { color: var(--muted); }
+
+    /* ---------- detail ---------- */
+    .detail-panel { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
+    .detail-main, .detail-side-block { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .detail-main h3 { margin: 0 0 4px; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+    .detail-main p { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+    .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .detail-metric { background: var(--bg-deep); border-radius: 8px; padding: 10px; }
+    .detail-metric-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .detail-metric-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .detail-metric-value.warning { color: var(--warning); }
+    .detail-metric-value.critical { color: var(--critical); }
+    .detail-metric-value.na { color: var(--offline); font-size: 16px; font-weight: 500; }
+    .detail-metric-unit { font-size: 12px; color: var(--muted); margin-left: 2px; }
+    .detail-meta { font-size: 11px; color: var(--muted); line-height: 1.7; }
+    .detail-side { display: flex; flex-direction: column; gap: 12px; }
+    .detail-side-block { font-size: 12px; }
+    .block-title { margin-bottom: 6px; font-weight: 600; }
+    .alert-row { padding: 6px 0; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; }
+    .alert-row:first-of-type { border-top: none; }
+    .inline-pill { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--bg-deep); border: 1px solid var(--line-2); margin: 2px 4px 2px 0; }
+    .alert-hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+
+    .history-head { display: flex; justify-content: space-between; align-items: center; margin: 16px 0 8px; flex-wrap: wrap; gap: 8px; }
+    .history-head h4 { margin: 0; font-size: 14px; }
+    .range-toggle button {
+      background: var(--panel); border: 1px solid var(--line-2); color: var(--muted); font-size: 11px;
+      padding: 4px 10px; border-radius: 6px; cursor: pointer; margin-left: 4px;
+    }
+    .range-toggle button.active { border-color: var(--blue); color: var(--text); }
+    .history-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .history-grid .chart-box { height: 210px; }
+    .history-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+    /* ---------- 수조별 데이터 표 ---------- */
+    .data-table-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: auto; max-height: 460px; }
+    .data-table-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 14px 6px; font-size: 13px; font-weight: 600; }
+    .data-table-title span { font-size: 11px; font-weight: 400; color: var(--muted); }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .data-table th, .data-table td { padding: 7px 12px; border-top: 1px solid var(--line); text-align: right; white-space: nowrap; }
+    .data-table th { position: sticky; top: 0; background: var(--bg-deep); color: var(--muted); font-weight: 500; z-index: 1; }
+    .data-table .l { text-align: left; }
+    .data-table td { font-variant-numeric: tabular-nums; }
+    .data-table tbody tr { cursor: pointer; }
+    .data-table tbody tr:hover { background: rgba(59,130,246,.08); }
+    .data-table td.warning { color: var(--warning); font-weight: 600; }
+    .data-table td.critical { color: var(--critical); font-weight: 600; }
+    .data-table td.na { color: var(--offline); }
+    .data-table tfoot td { background: var(--bg-deep); font-weight: 600; position: sticky; bottom: 0; }
+
+    .empty { font-size: 12px; color: var(--muted); padding: 8px; }
+    .error-box { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.4); border-radius: 12px; padding: 16px; font-size: 13px; line-height: 1.7; }
+    .error-box code { background: var(--bg-deep); padding: 2px 6px; border-radius: 4px; }
+
+    @media (max-width: 1100px) {
+      .top-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .detail-panel { grid-template-columns: 1fr; }
+      .energy-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      header { padding: 12px 16px; }
+      main { flex-direction: column; }
+      .sidebar { width: 100%; height: auto; max-height: 220px; position: static; border-right: none; border-bottom: 1px solid var(--line); }
+      .content { padding: 14px 16px 28px; }
+      .charts-row, .history-grid { grid-template-columns: 1fr; }
+      .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .header-add-device { width: 100%; }
+      .header-add-device input { flex: 1; min-width: 0; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="logo-title">
+      <span class="logo-dot"></span>
+      <span>Ultrasonic Antifouling Monitoring System</span>
+    </div>
+    <div class="header-right">
+      <div class="view-toggle">
+        <button id="btnViewGlobal" class="active">중앙 모니터링</button>
+        <button id="btnViewDetail">수족관별 보기</button>
+      </div>
+      <span id="liveStatus" class="live-status" title="5초마다 데이터를 다시 읽습니다. 새 데이터는 python live_simulator.py 실행 중에만 생깁니다. 클릭하면 멈추거나 다시 시작합니다."><span class="dot"></span><span id="liveText">연결 중…</span></span>
+      <span id="headerSummary"></span>
+      <div class="header-add-device">
+        <input type="text" id="inputName" placeholder="수족관 이름" />
+        <input type="text" id="inputLocation" placeholder="위치 / 설명" />
+        <button id="btnAddDevice">+ 장비 등록</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <aside class="sidebar">
+      <div class="sb-section-title"><span>장비 목록</span><span id="sbCount"></span></div>
+      <div class="device-list" id="deviceList"></div>
+    </aside>
+
+    <section class="content" id="content">
+      <section class="top-summary" id="topSummary"></section>
+
+      <section id="globalCharts" class="charts-row">
+        <div class="chart-box"><canvas id="chartTemperature"></canvas></div>
+        <div class="chart-box"><canvas id="chartWaterLevel"></canvas></div>
+        <div class="chart-box"><canvas id="chartTurbidity"></canvas></div>
+        <div class="chart-box"><canvas id="chartPower"></canvas></div>
+      </section>
+
+      <section id="globalTable" class="data-table-wrap"></section>
+
+      <div class="view-title-row">
+        <h2 id="viewTitle">중앙 모니터링 화면</h2>
+        <span id="viewDesc">모든 수족관의 초음파 방오 장비 상태와 수질 요약</span>
+        <span class="snapshot" id="snapshotTime"></span>
+      </div>
+
+      <section id="globalView">
+        <div class="alert-strip" id="alertStrip"></div>
+        <div class="grid-devices" id="gridDevices"></div>
+      </section>
+
+      <section id="detailView" style="display:none;">
+        <div id="detailPanel" class="detail-panel" style="display:none;"></div>
+        <div id="historySection" style="display:none;">
+          <div class="history-head">
+            <h4>시간별 센서 변화</h4>
+            <div class="range-toggle" id="rangeToggle">
+              <button data-hours="6">6시간</button>
+              <button data-hours="24" class="active">24시간</button>
+              <button data-hours="168">7일</button>
+            </div>
+          </div>
+          <div class="history-grid">
+            <div class="chart-box"><canvas id="histTemperature"></canvas></div>
+            <div class="chart-box"><canvas id="histWaterLevel"></canvas></div>
+            <div class="chart-box"><canvas id="histTurbidity"></canvas></div>
+            <div class="chart-box"><canvas id="histPower"></canvas></div>
+          </div>
+          <div class="history-note" id="historyNote"></div>
+          <div class="data-table-wrap" id="historyTable" style="margin-top:12px;"></div>
+
+          <div class="history-head"><h4>일별 전력량</h4><span class="history-note" style="margin:0">Σ power_w × (5/60) ÷ 1000 · 하루 288개 시점 기준</span></div>
+          <div class="energy-grid">
+            <div class="chart-box"><canvas id="dailyEnergyChart"></canvas></div>
+            <div class="data-table-wrap" id="dailyEnergyTable"></div>
+          </div>
+
+          <div class="history-head"><h4>경고 이력</h4><span class="history-note" style="margin:0">alerts.csv · 최신 발생순</span></div>
+          <div class="data-table-wrap" id="alertHistory"></div>
+        </div>
+        <div id="detailEmpty" class="empty">좌측에서 수족관을 선택하면 상세 정보가 표시됩니다.</div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    // ================= 상수 =================
+    const STATUS_LABEL = { normal: "정상", warning: "주의", critical: "위험", offline: "통신 끊김", nodata: "데이터 없음" };
+    const STATUS_LONG = {
+      normal: "정상 (권장 범위)", warning: "주의 (점검 필요)", critical: "위험 (즉시 조치)",
+      offline: "통신 끊김 (상태 알 수 없음)", nodata: "데이터 없음 (신규 등록)"
+    };
+    const STATUS_COLOR = { normal: "#22c55e", warning: "#f59e0b", critical: "#ef4444", offline: "#94a3b8", nodata: "#94a3b8" };
+    const ALERT_LABEL = {
+      temperature_out_of_range: "수온 범위 이탈",
+      low_water_level: "수위 저하",
+      high_turbidity: "탁도 상승",
+      device_stopped: "장비 정지 (전력 0 W)",
+      communication_lost: "통신 끊김",
+      power_out_of_range: "전력 범위 이탈",
+      low_power: "전력 저하",
+      high_power: "전력 과다"
+    };
+    const METRICS = [
+      { key: "temperature_c",   label: "수온",  unit: "℃",  digits: 1, color: "#3b82f6", canvas: "Temperature", type: "line" },
+      { key: "water_level_pct", label: "수위",  unit: "%",   digits: 1, color: "#22c55e", canvas: "WaterLevel",  type: "line" },
+      { key: "turbidity_ntu",   label: "탁도",  unit: "NTU", digits: 2, color: "#f59e0b", canvas: "Turbidity",   type: "line" },
+      { key: "power_w",         label: "전력",  unit: "W",   digits: 1, color: "#ef4444", canvas: "Power",       type: "bar"  }
+    ];
+
+    // ================= 상태 =================
+    const state = {
+      view: "global",
+      tanks: [],
+      alerts: [],
+      thresholds: null,
+      snapshot: null,
+      selectedId: null,
+      rangeHours: 24,
+      history: null,          // Map<tank_id, rows[]>
+      historyLoading: null    // Promise
+    };
+    const charts = {};
+
+    // ================= 유틸 =================
+    const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const isNum = v => typeof v === "number" && Number.isFinite(v);
+    const fmt = (v, d) => isNum(v) ? v.toFixed(d) : "—";
+    const fmtTime = iso => iso ? new Date(iso).toLocaleString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" }) : "—";
+    const fmtShort = iso => {
+      const d = new Date(iso);
+      const p = n => String(n).padStart(2, "0");
+      // Asia/Seoul 고정 표시 (+09:00)
+      const k = new Date(d.getTime() + 9 * 3600e3);
+      return `${p(k.getUTCMonth() + 1)}/${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}`;
+    };
+    const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+    // 값별 판정 (thresholds.json 기준) → 'normal' | 'warning' | 'critical'
+    function metricLevel(key, v) {
+      const t = state.thresholds?.[key];
+      if (!t || !isNum(v)) return "normal";
+      switch (key) {
+        case "temperature_c":
+          if (v <= t.critical_below_or_equal || v >= t.critical_above_or_equal) return "critical";
+          if (v < t.warning_below || v > t.warning_above) return "warning";
+          return "normal";
+        case "water_level_pct":
+          if (v < t.critical_below) return "critical";
+          if (v < t.warning_below) return "warning";
+          return "normal";
+        case "turbidity_ntu":
+          if (v >= t.critical_above_or_equal) return "critical";
+          if (v > t.warning_above) return "warning";
+          return "normal";
+        case "power_w":
+          if (v === 0 || v >= t.critical_above_or_equal) return "critical";
+          if (v < t.warning_below || v > t.warning_above) return "warning";
+          return "normal";
+      }
+      return "normal";
+    }
+    // 차트용 기준선
+    function thresholdLines(key) {
+      const t = state.thresholds?.[key];
+      if (!t) return [];
+      const W = "rgba(245,158,11,.7)", C = "rgba(239,68,68,.7)";
+      switch (key) {
+        case "temperature_c":   return [[t.warning_below, W], [t.warning_above, W]];
+        case "water_level_pct": return [[t.warning_below, W], [t.critical_below, C]];
+        case "turbidity_ntu":   return [[t.warning_above, W], [t.critical_above_or_equal, C]];
+        case "power_w":         return [[t.warning_below, W], [t.warning_above, W]];
+      }
+      return [];
+    }
+
+    // ================= 데이터 로드 =================
+    async function loadDashboard() {
+      const res = await fetch("./dashboard_data.json", { cache: "no-store" });
+      if (!res.ok) throw new Error("dashboard_data.json 을 읽을 수 없습니다. (HTTP " + res.status + ")");
+      const data = await res.json();
+      // 화면에서 직접 등록한 장비(파일에 없음)는 갱신 후에도 유지
+      const ids = new Set(data.tanks.map(t => t.tank_id));
+      const local = state.tanks.filter(t => t.status === "nodata" && !ids.has(t.tank_id));
+      state.tanks = [...data.tanks.map(t => ({ ...t })), ...local];
+      state.alerts = data.alerts.filter(a => a.is_active);
+      state.thresholds = data.thresholds;
+      state.snapshot = data.summary?.timestamp;
+      state.isLive = !!data.metadata?.live;
+      mergeRecentHistory(data.recent_history);
+      await loadAlertLog();
+    }
+
+    // alerts.csv 전체(해제된 경고 포함) — 수족관별 경고 이력에 사용. 실패해도 화면은 계속 동작
+    async function loadAlertLog() {
+      try {
+        const res = await fetch("./alerts.csv", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const lines = (await res.text()).replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
+        const head = lines[0].split(",");
+        state.alertLog = lines.slice(1).map(l => {
+          const c = l.split(","), o = {};
+          head.forEach((h, i) => o[h] = c[i] ?? "");
+          return { ...o, ended_at: o.ended_at || null, is_active: o.is_active === "True" };
+        });
+      } catch (e) {
+        state.alertLog = state.alertLog || null;
+      }
+    }
+
+    // live_simulator.py 가 넣어 준 최근 기록을 이미 읽은 기록 뒤에 이어 붙임 (큰 CSV 재다운로드 방지)
+    const HISTORY_KEEP = 7 * 24 * 12;
+    function mergeRecentHistory(recent) {
+      if (!state.history || !recent?.length) return;
+      const oldest = recent.reduce((m, r) => r.timestamp < m ? r.timestamp : m, recent[0].timestamp);
+      const gapLimit = new Date(oldest).getTime() - 5 * 60 * 1000;
+      for (const rows of state.history.values()) {
+        const last = rows[rows.length - 1];
+        if (last && new Date(last.ts).getTime() < gapLimit) {   // 너무 오래 놓쳤으면 CSV 전체를 다시 읽음
+          state.history = null; state.historyLoading = null;
+          loadHistory().then(render).catch(() => {});
+          return;
+        }
+      }
+      for (const r of recent) {
+        if (!state.history.has(r.tank_id)) state.history.set(r.tank_id, []);
+        const rows = state.history.get(r.tank_id);
+        const last = rows[rows.length - 1];
+        if (last && r.timestamp <= last.ts) continue;
+        rows.push({ ts: r.timestamp, temperature_c: r.temperature_c, water_level_pct: r.water_level_pct,
+                    turbidity_ntu: r.turbidity_ntu, power_w: r.power_w, status: r.status });
+        if (rows.length > HISTORY_KEEP) rows.splice(0, rows.length - HISTORY_KEEP);
+      }
+    }
+
+    // sensor_history.csv (약 7MB) — 상세 보기에서 처음 필요할 때 한 번만 읽음
+    function loadHistory() {
+      if (state.history) return Promise.resolve(state.history);
+      if (state.historyLoading) return state.historyLoading;
+      state.historyLoading = (async () => {
+        const res = await fetch("./sensor_history.csv", { cache: "no-store" });
+        if (!res.ok) throw new Error("sensor_history.csv 를 읽을 수 없습니다.");
+        const text = (await res.text()).replace(/^﻿/, "");
+        const lines = text.split(/\r?\n/);
+        const head = lines[0].split(",");
+        const idx = Object.fromEntries(head.map((h, i) => [h, i]));
+        const num = s => s === "" || s == null ? null : Number(s); // 빈값은 결측 (0 아님)
+        const map = new Map();
+        for (let i = 1; i < lines.length; i++) {
+          if (!lines[i]) continue;
+          const c = lines[i].split(",");
+          const row = {
+            ts: c[idx.timestamp],
+            temperature_c: num(c[idx.temperature_c]),
+            water_level_pct: num(c[idx.water_level_pct]),
+            turbidity_ntu: num(c[idx.turbidity_ntu]),
+            power_w: num(c[idx.power_w]),
+            status: c[idx.status]
+          };
+          const id = c[idx.tank_id];
+          if (!map.has(id)) map.set(id, []);
+          map.get(id).push(row);
+        }
+        for (const rows of map.values()) rows.sort((a, b) => a.ts < b.ts ? -1 : 1);
+        state.history = map;
+        return map;
+      })();
+      return state.historyLoading;
+    }
+
+    // 전력량(kWh) = Σ power_w × (5/60) ÷ 1000  (5분 간격 기록, 수신 없는 시점은 제외)
+    const INTERVAL_H = 5 / 60;
+    function energyKwh(rows) {
+      return rows.reduce((s, r) => s + (isNum(r.power_w) ? r.power_w * INTERVAL_H : 0), 0) / 1000;
+    }
+    function tankEnergy(id) {
+      const rows = state.history?.get(id);
+      return rows ? energyKwh(rows) : null;
+    }
+    // 날짜(한국시간)별 전력량. ts 는 +09:00 문자열이라 앞 10자리가 곧 한국 날짜
+    function dailyEnergy(rows) {
+      const days = new Map();
+      for (const r of rows) {
+        const d = r.ts.slice(0, 10);
+        if (!days.has(d)) days.set(d, []);
+        days.get(d).push(r);
+      }
+      return [...days].map(([date, rs]) => {
+        const p = rs.map(r => r.power_w).filter(isNum);
+        return { date, points: rs.length, received: p.length, kwh: energyKwh(rs), avgW: avg(p) };
+      });
+    }
+    // 카드용 미니 추이 (SVG). 값이 없는 구간은 선을 끊음
+    function sparkline(values, color) {
+      const nums = values.filter(isNum);
+      if (nums.length < 2) return `<svg class="spark" viewBox="0 0 100 18"></svg>`;
+      let lo = Math.min(...nums), hi = Math.max(...nums);
+      if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+      const n = values.length;
+      const segs = [[]];
+      values.forEach((v, i) => {
+        if (!isNum(v)) { if (segs[segs.length - 1].length) segs.push([]); return; }
+        const x = (i / (n - 1)) * 100, y = 16 - ((v - lo) / (hi - lo)) * 14;
+        segs[segs.length - 1].push(`${x.toFixed(1)},${y.toFixed(1)}`);
+      });
+      return `<svg class="spark" viewBox="0 0 100 18" preserveAspectRatio="none">${segs.filter(s => s.length > 1)
+        .map(s => `<polyline points="${s.join(" ")}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`).join("")}</svg>`;
+    }
+    const SPARK_POINTS = 6 * 12;   // 카드 미니 추이: 최근 6시간
+    const durationText = ms => {
+      const m = Math.max(0, Math.round(ms / 60000));
+      return m < 60 ? `${m}분` : m < 1440 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${Math.floor(m / 1440)}일 ${Math.floor(m % 1440 / 60)}시간`;
+    };
+
+    function historyRange(map) {
+      let first = null, last = null;
+      for (const rows of map.values()) {
+        if (!rows.length) continue;
+        if (!first || rows[0].ts < first) first = rows[0].ts;
+        if (!last || rows[rows.length - 1].ts > last) last = rows[rows.length - 1].ts;
+      }
+      return { first, last };
+    }
+
+    // ================= 요약 계산 =================
+    function computeSummary() {
+      const tanks = state.tanks;
+      const received = tanks.filter(t => t.is_online && t.status !== "nodata");
+      const pick = k => received.map(t => t[k]).filter(isNum);
+      return {
+        total: tanks.length,
+        abnormal: tanks.filter(t => ["warning", "critical", "offline"].includes(t.status)).length,
+        warning: tanks.filter(t => t.status === "warning").length,
+        critical: tanks.filter(t => t.status === "critical").length,
+        offline: tanks.filter(t => t.status === "offline").length,
+        received: received.length,
+        power: pick("power_w").reduce((a, b) => a + b, 0),
+        temp: avg(pick("temperature_c")),
+        level: avg(pick("water_level_pct")),
+        turb: avg(pick("turbidity_ntu"))
+      };
+    }
+
+    // ================= 렌더링 =================
+    function render() {
+      renderHeaderSummary();
+      renderDeviceList();
+      renderTopSummary();
+      renderView();
+    }
+
+    function renderHeaderSummary() {
+      const s = computeSummary();
+      document.getElementById("headerSummary").innerHTML =
+        `장비 <b>${s.total}</b>대 / 이상 감지 <b class="${s.abnormal ? "bad" : ""}">${s.abnormal}</b>대`;
+      document.getElementById("snapshotTime").textContent = "기준 시각 " + fmtTime(state.snapshot) + " · 가상 데이터";
+    }
+
+    function badgeHtml(status, long = false) {
+      return `<span class="badge ${status}">${(long ? STATUS_LONG : STATUS_LABEL)[status] ?? status}</span>`;
+    }
+
+    function selectTank(id) {
+      state.selectedId = id;
+      state.view = "detail";
+      syncViewButtons();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function renderDeviceList() {
+      const wrap = document.getElementById("deviceList");
+      document.getElementById("sbCount").textContent = state.tanks.length + "대";
+      if (!state.tanks.length) { wrap.innerHTML = '<div class="empty">등록된 장비가 없습니다.</div>'; return; }
+      wrap.innerHTML = state.tanks.map(t => `
+        <div class="device-item ${t.tank_id === state.selectedId && state.view === "detail" ? "active" : ""}" data-id="${esc(t.tank_id)}">
+          <div class="device-main">
+            <div class="device-name">${esc(t.tank_name)}</div>
+            <div class="device-location">${esc(t.location)} · ${esc(t.device_id)}</div>
+          </div>
+          ${badgeHtml(t.status)}
+        </div>`).join("");
+      wrap.querySelectorAll(".device-item").forEach(el => el.onclick = () => selectTank(el.dataset.id));
+    }
+
+    function renderTopSummary() {
+      const s = computeSummary();
+      const partial = s.received < s.total;
+      const card = (label, value, unit, sub) => `
+        <div class="summary-card">
+          <div class="summary-label">${label}</div>
+          <div class="summary-main"><div class="summary-value">${value}</div><div class="summary-unit">${unit}</div></div>
+          <div class="summary-sub">${sub}</div>
+        </div>`;
+      document.getElementById("topSummary").innerHTML =
+        card("현재 총 전력 사용량", s.power.toFixed(1), "W",
+          partial ? `${s.received}/${s.total}대 수신 · 미수신 장비 제외` : "초음파 방오 시스템 전체 합산") +
+        energyCard(card) +
+        card("평균 수온", fmt(s.temp, 1), "℃", `수신된 ${s.received}개 수조 단순 평균`) +
+        card("평균 수위", fmt(s.level, 1), "%", "탱크 수위 센서 기준") +
+        card("평균 탁도", fmt(s.turb, 2), "NTU", "수질 상태 모니터링");
+    }
+
+    function energyCard(card) {
+      const map = state.history;
+      if (!map) return card("누적 총 전력량", "…", "kWh",
+        state.historyError ? esc(state.historyError) : "sensor_history.csv 불러오는 중");
+      let total = 0;
+      for (const rows of map.values()) total += energyKwh(rows);
+      const { first, last } = historyRange(map);
+      return card("누적 총 전력량", total.toFixed(1), "kWh",
+        `${fmtShort(first)} ~ ${fmtShort(last)} · ${map.size}대 합산`);
+    }
+
+    function renderView() {
+      const isGlobal = state.view === "global";
+      document.getElementById("globalView").style.display = isGlobal ? "block" : "none";
+      document.getElementById("globalCharts").style.display = isGlobal ? "grid" : "none";
+      document.getElementById("globalTable").style.display = isGlobal ? "block" : "none";
+      document.getElementById("detailView").style.display = isGlobal ? "none" : "block";
+      document.getElementById("viewTitle").textContent = isGlobal ? "중앙 모니터링 화면" : "수족관별 상세 화면";
+      document.getElementById("viewDesc").textContent = isGlobal
+        ? "모든 수족관의 초음파 방오 장비 상태와 수질 요약"
+        : "좌측에서 선택한 수족관의 상태 상세와 시간별 변화";
+      if (isGlobal) { renderAlertStrip(); renderGlobalGrid(); renderGlobalCharts(); renderGlobalTable(); }
+      else renderDetailPanel();
+    }
+
+    function renderAlertStrip() {
+      const el = document.getElementById("alertStrip");
+      const rank = { critical: 0, offline: 1, warning: 2 };
+      const list = [...state.alerts].sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9));
+      el.innerHTML = list.map(a => {
+        const t = state.tanks.find(x => x.tank_id === a.tank_id);
+        return `<div class="alert-chip" data-id="${esc(a.tank_id)}">
+          ${badgeHtml(a.severity)}
+          <span>${esc(t?.tank_name ?? a.tank_id)} · ${esc(ALERT_LABEL[a.alert_code] ?? a.alert_code)}</span>
+          <span class="t">${fmtShort(a.started_at)}부터</span>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".alert-chip").forEach(c => c.onclick = () => selectTank(c.dataset.id));
+    }
+
+    function metricPill(t, m) {
+      const v = t[m.key];
+      const lv = isNum(v) ? metricLevel(m.key, v) : "na";
+      const txt = isNum(v) ? `${v.toFixed(m.key === "water_level_pct" ? 0 : m.digits)} ${m.unit}` : "미수신";
+      const rows = state.history?.get(t.tank_id);
+      const spark = rows ? sparkline(rows.slice(-SPARK_POINTS).map(r => r[m.key]), m.color) : "";
+      return `<div class="metric-pill" title="${m.label} 최근 6시간 추이"><span class="metric-label">${m.label}</span><span class="metric-value ${lv === "normal" ? "" : lv}">${txt}</span>${spark}</div>`;
+    }
+
+    function renderGlobalGrid() {
+      const grid = document.getElementById("gridDevices");
+      if (!state.tanks.length) { grid.innerHTML = '<div class="empty">등록된 장비가 없습니다.</div>'; return; }
+      const order = ["power_w", "temperature_c", "water_level_pct", "turbidity_ntu"].map(k => METRICS.find(m => m.key === k));
+      grid.innerHTML = state.tanks.map(t => `
+        <div class="device-card ${t.status}" data-id="${esc(t.tank_id)}">
+          <div class="device-card-header">
+            <div>
+              <div class="device-card-name">${esc(t.tank_name)}</div>
+              <div class="device-card-location">${esc(t.location)}</div>
+            </div>
+            ${badgeHtml(t.status)}
+          </div>
+          <div class="metrics-row">${order.map(m => metricPill(t, m)).join("")}</div>
+          ${state.history?.has(t.tank_id) ? `<div class="card-energy"><span>누적 전력량 (7일)</span><b>${tankEnergy(t.tank_id).toFixed(2)} kWh</b></div>` : ""}
+          ${t.alert_codes ? `<div class="card-foot">⚠ ${t.alert_codes.split("|").map(c => esc(ALERT_LABEL[c] ?? c)).join(", ")}${t.status === "offline" ? " · 마지막 수신 " + fmtShort(t.last_seen) : ""}</div>` : ""}
+        </div>`).join("");
+      grid.querySelectorAll(".device-card").forEach(c => c.onclick = () => selectTank(c.dataset.id));
+    }
+
+    // ---------- 공통 차트 옵션 ----------
+    function baseOptions(title, extra = {}) {
+      return {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { ticks: { color: "#cbd5e1", font: { size: 10 } }, grid: { color: "rgba(255,255,255,0.05)" }, ...(extra.y || {}) },
+          x: { ticks: { color: "#cbd5e1", font: { size: 10 }, maxRotation: 60, autoSkip: true, ...(extra.xTicks || {}) }, grid: { display: false } }
+        },
+        plugins: {
+          title: { display: true, text: title, color: "#e5e7eb", align: "start", font: { size: 12, weight: "600" } },
+          legend: { display: false },
+          tooltip: { filter: item => !item.dataset._threshold, ...(extra.tooltip || {}) }
+        }
+      };
+    }
+    function thresholdDatasets(key, n) {
+      return thresholdLines(key).map(([v, color]) => ({
+        type: "line", data: Array(n).fill(v), borderColor: color, borderDash: [4, 4], borderWidth: 1,
+        pointRadius: 0, fill: false, _threshold: true
+      }));
+    }
+
+    function renderGlobalCharts() {
+      const tanks = state.tanks;
+      if (!tanks.length || !window.Chart) return;
+      const labels = tanks.map(t => t.tank_name);
+      METRICS.forEach(m => {
+        const id = "chart" + m.canvas;
+        charts[id]?.destroy();
+        const data = tanks.map(t => isNum(t[m.key]) ? t[m.key] : null);
+        const ptColor = tanks.map(t => isNum(t[m.key]) ? STATUS_COLOR[metricLevel(m.key, t[m.key])] : "transparent");
+        const main = m.type === "bar"
+          ? { type: "bar", data, backgroundColor: tanks.map(t => {
+                const lv = isNum(t[m.key]) ? metricLevel(m.key, t[m.key]) : "normal";
+                return lv === "normal" ? "rgba(239,68,68,0.55)" : STATUS_COLOR[lv];
+              }), borderWidth: 0, borderRadius: 3 }
+          : { type: "line", data, borderColor: m.color, backgroundColor: m.color + "33", borderWidth: 2, tension: 0.25, fill: true,
+              spanGaps: false, pointRadius: tanks.map(t => isNum(t[m.key]) && metricLevel(m.key, t[m.key]) !== "normal" ? 5 : 2),
+              pointBackgroundColor: ptColor, pointBorderColor: ptColor };
+        main.label = `${m.label} (${m.unit})`;
+        charts[id] = new Chart(document.getElementById(id), {
+          data: { labels, datasets: [main, ...thresholdDatasets(m.key, labels.length)] },
+          options: baseOptions(`수조별 ${m.label} (${m.unit}) · 점선 = 판정 기준`, {
+            tooltip: { callbacks: { label: c => c.raw == null ? " 미수신" : ` ${c.raw} ${m.unit}` } }
+          })
+        });
+      });
+    }
+
+    // 그래프 4개(수온·수위·탁도·전력)와 같은 값을 표로 표시
+    function renderGlobalTable() {
+      const wrap = document.getElementById("globalTable");
+      const tanks = state.tanks;
+      if (!tanks.length) { wrap.innerHTML = '<div class="empty">등록된 장비가 없습니다.</div>'; return; }
+      const cols = ["temperature_c", "water_level_pct", "turbidity_ntu", "power_w"].map(k => METRICS.find(m => m.key === k));
+      const cell = (t, m) => {
+        const v = t[m.key];
+        if (!isNum(v)) return `<td class="na">미수신</td>`;
+        const lv = metricLevel(m.key, v);
+        return `<td class="${lv === "normal" ? "" : lv}">${v.toFixed(m.digits)}</td>`;
+      };
+      const s = computeSummary();
+      const foot = { temperature_c: fmt(s.temp, 1), water_level_pct: fmt(s.level, 1), turbidity_ntu: fmt(s.turb, 2), power_w: s.power.toFixed(1) };
+      const activeCount = id => state.alerts.filter(a => a.tank_id === id).length;
+      const kwhCell = t => {
+        const e = tankEnergy(t.tank_id);
+        return e == null ? `<td class="na">${state.history ? "—" : "…"}</td>` : `<td>${e.toFixed(2)}</td>`;
+      };
+      const alertCell = t => { const n = activeCount(t.tank_id); return `<td class="${n ? "active-alert" : "zero"}">${n}</td>`; };
+      const totalKwh = state.history ? [...state.history.values()].reduce((a, rows) => a + energyKwh(rows), 0).toFixed(2) : "…";
+      wrap.innerHTML = `
+        <div class="data-table-title">수조별 측정값 <span>주황 = 주의 · 빨강 = 위험 (판정 기준 = 그래프 점선) · 행 클릭 시 상세 보기</span></div>
+        <table class="data-table">
+          <thead><tr><th class="l">수조</th><th class="l">위치</th><th class="l">상태</th>${cols.map(m => `<th>${m.label} (${m.unit})</th>`).join("")}<th>누적 전력량 (kWh)</th><th>진행 중 경고</th></tr></thead>
+          <tbody>${tanks.map(t => `
+            <tr data-id="${esc(t.tank_id)}">
+              <td class="l">${esc(t.tank_name)}</td><td class="l">${esc(t.location)}</td><td class="l">${badgeHtml(t.status)}</td>
+              ${cols.map(m => cell(t, m)).join("")}${kwhCell(t)}${alertCell(t)}
+            </tr>`).join("")}
+          </tbody>
+          <tfoot><tr><td class="l" colspan="3">평균 (전력·전력량·경고는 합계) · 수신 ${s.received}/${s.total}대</td>${cols.map(m => `<td>${foot[m.key]}</td>`).join("")}<td>${totalKwh}</td><td>${state.alerts.length}</td></tr></tfoot>
+        </table>`;
+      wrap.querySelectorAll("tbody tr").forEach(el => el.onclick = () => selectTank(el.dataset.id));
+    }
+
+    // ---------- 상세 ----------
+    function renderDetailPanel() {
+      const panel = document.getElementById("detailPanel");
+      const empty = document.getElementById("detailEmpty");
+      const hist = document.getElementById("historySection");
+      const t = state.tanks.find(d => d.tank_id === state.selectedId) || state.tanks[0];
+      if (!t) { panel.style.display = "none"; hist.style.display = "none"; empty.style.display = "block"; return; }
+      state.selectedId = t.tank_id;
+      empty.style.display = "none";
+      panel.style.display = "grid";
+
+      const metricBox = m => {
+        const v = t[m.key];
+        const lv = isNum(v) ? metricLevel(m.key, v) : "na";
+        return `<div class="detail-metric">
+          <div class="detail-metric-label">${m.key === "power_w" ? "현재 전력 사용량" : m.label}</div>
+          <div>${isNum(v)
+            ? `<span class="detail-metric-value ${lv === "normal" ? "" : lv}">${v.toFixed(m.digits)}</span><span class="detail-metric-unit">${m.unit}</span>`
+            : `<span class="detail-metric-value na">미수신</span>`}</div>
+        </div>`;
+      };
+      const order = ["power_w", "temperature_c", "water_level_pct", "turbidity_ntu"].map(k => METRICS.find(m => m.key === k));
+      const myAlerts = state.alerts.filter(a => a.tank_id === t.tank_id);
+      const stateLabel = { running: "운전", stopped: "정지", offline: "알 수 없음 (통신 끊김)" }[t.device_state] ?? "—";
+
+      panel.innerHTML = `
+        <div class="detail-main">
+          <h3>${esc(t.tank_name)} ${badgeHtml(t.status)}</h3>
+          <p>${esc(t.location)} · 탱크 용량 약 ${t.capacity_l ? Number(t.capacity_l).toLocaleString() : "—"} L${t.description ? " · " + esc(t.description) : ""}</p>
+          <div class="detail-grid">${order.map(metricBox).join("")}</div>
+          <div class="detail-meta">
+            측정 시각: ${fmtTime(t.timestamp)} · 마지막 정상 통신: ${fmtTime(t.last_seen)}<br/>
+            장비 ID: ${esc(t.device_id)} · 수조 ID: ${esc(t.tank_id)} · 장비 상태: ${stateLabel}<br/>
+            정격 전력 ${t.rated_power_w ?? "—"} W · 설정 주파수 ${t.ultrasonic_frequency_khz ?? "—"} kHz<br/>
+            누적 전력량(전체 기록): <b>${state.history?.has(t.tank_id) ? energyKwh(state.history.get(t.tank_id)).toFixed(2) + " kWh" : "—"}</b>
+          </div>
+        </div>
+        <div class="detail-side">
+          <div class="detail-side-block">
+            <div class="block-title">상태 요약</div>
+            ${badgeHtml(t.status, true)}
+            <div style="margin-top:10px;">
+              ${myAlerts.length
+                ? myAlerts.map(a => `<div class="alert-row"><span>${esc(ALERT_LABEL[a.alert_code] ?? a.alert_code)}</span><span style="color:var(--muted)">${fmtShort(a.started_at)}부터 진행 중</span></div>`).join("")
+                : `<div style="color:var(--muted)">진행 중인 경고 없음</div>`}
+            </div>
+          </div>
+          <div class="detail-side-block">
+            <div class="block-title">AI·알림 설계 메모</div>
+            <span class="inline-pill">📱 모바일 푸시 알림</span>
+            <span class="inline-pill">🤖 수질 패턴 분석</span>
+            <span class="inline-pill">⚙️ 자동 운전 모드 연계</span>
+            <div class="alert-hint">
+              예) 수위 ${state.thresholds?.water_level_pct?.warning_below ?? 60}% 미만 또는 탁도 ${state.thresholds?.turbidity_ntu?.warning_above ?? 5} NTU 초과가 10분 지속 →<br/>
+              &nbsp;· 방오 장비 출력 조정<br/>&nbsp;· 수질 관리 담당자에게 앱 알림 발송
+            </div>
+          </div>
+        </div>`;
+
+      renderAlertHistory(t);
+      renderHistory(t);
+    }
+
+    // 선택한 수족관의 경고 발생·해제 이력 (alerts.csv)
+    function renderAlertHistory(t) {
+      const wrap = document.getElementById("alertHistory");
+      const log = state.alertLog;
+      if (!log) { wrap.innerHTML = '<div class="empty">alerts.csv 를 읽지 못했습니다.</div>'; return; }
+      const rows = log.filter(a => a.tank_id === t.tank_id).sort((a, b) => a.started_at < b.started_at ? 1 : -1);
+      if (!rows.length) { wrap.innerHTML = '<div class="empty">이 수족관의 경고 이력이 없습니다.</div>'; return; }
+      const nowMs = new Date(state.snapshot).getTime();
+      const active = rows.filter(a => a.is_active).length;
+      wrap.innerHTML = `
+        <div class="data-table-title">${esc(t.tank_name)} 경고 ${rows.length}건 <span>진행 중 ${active}건 · 해제 ${rows.length - active}건</span></div>
+        <table class="data-table">
+          <thead><tr><th class="l">이벤트</th><th class="l">내용</th><th class="l">심각도</th><th class="l">시작</th><th class="l">종료</th><th>지속 시간</th></tr></thead>
+          <tbody>${rows.map(a => `
+            <tr><td class="l">${esc(a.event_id)}</td><td class="l">${esc(ALERT_LABEL[a.alert_code] ?? a.alert_code)}</td>
+              <td class="l">${badgeHtml(a.severity)}</td><td class="l">${fmtShort(a.started_at)}</td>
+              <td class="l ${a.is_active ? "active-alert" : ""}">${a.is_active ? "진행 중" : fmtShort(a.ended_at)}</td>
+              <td>${durationText((a.is_active ? nowMs : new Date(a.ended_at).getTime()) - new Date(a.started_at).getTime())}</td></tr>`).join("")}
+          </tbody>
+        </table>`;
+    }
+
+    // 선택한 수족관의 날짜별 전력량 (그래프 + 표)
+    function renderDailyEnergy(t, all) {
+      const days = dailyEnergy(all);
+      const wrap = document.getElementById("dailyEnergyTable");
+      charts.dailyEnergy?.destroy();
+      if (!days.length) { wrap.innerHTML = '<div class="empty">기록이 없습니다.</div>'; return; }
+      const label = d => `${d.date.slice(5).replace("-", "/")}${d.points < 288 ? "*" : ""}`;
+      charts.dailyEnergy = new Chart(document.getElementById("dailyEnergyChart"), {
+        type: "bar",
+        data: { labels: days.map(label), datasets: [{ label: "전력량 (kWh)", data: days.map(d => +d.kwh.toFixed(3)),
+          backgroundColor: days.map(d => d.points < 288 ? "rgba(239,68,68,0.35)" : "rgba(239,68,68,0.7)"), borderRadius: 3 }] },
+        options: baseOptions(`${t.tank_name} 일별 전력량 (kWh) · * = 하루 일부만 기록`, {
+          tooltip: { callbacks: { label: c => ` ${days[c.dataIndex].kwh.toFixed(3)} kWh · ${days[c.dataIndex].points}/288 시점` } }
+        })
+      });
+      const total = days.reduce((a, d) => a + d.kwh, 0);
+      wrap.innerHTML = `
+        <table class="data-table">
+          <thead><tr><th class="l">날짜</th><th>기록 시점</th><th>평균 전력 (W)</th><th>전력량 (kWh)</th></tr></thead>
+          <tbody>${days.slice().reverse().map(d => `
+            <tr><td class="l">${d.date}${d.points < 288 ? " (일부)" : ""}</td>
+              <td class="${d.received < d.points ? "active-alert" : ""}">${d.received}/${d.points}</td>
+              <td>${fmt(d.avgW, 1)}</td><td>${d.kwh.toFixed(3)}</td></tr>`).join("")}
+          </tbody>
+          <tfoot><tr><td class="l" colspan="3">합계 · ${days.length}일</td><td>${total.toFixed(3)}</td></tr></tfoot>
+        </table>`;
+    }
+
+    async function renderHistory(t) {
+      const sec = document.getElementById("historySection");
+      const note = document.getElementById("historyNote");
+      sec.style.display = "block";
+      if (t.status === "nodata") {
+        destroyHistory();
+        note.textContent = "신규 등록 장비는 아직 기록이 없습니다.";
+        document.getElementById("historyTable").innerHTML = "";
+        document.getElementById("dailyEnergyTable").innerHTML = '<div class="empty">기록이 없습니다.</div>';
+        charts.dailyEnergy?.destroy(); delete charts.dailyEnergy;
+        return;
+      }
+      if (!state.history) note.textContent = "시간별 기록(sensor_history.csv)을 불러오는 중…";
+      let map;
+      try { map = await loadHistory(); }
+      catch (e) { note.textContent = e.message; return; }
+      if (state.selectedId !== t.tank_id || state.view !== "detail") return; // 로딩 중 선택 변경
+
+      const all = map.get(t.tank_id) || [];
+      const n = Math.round(state.rangeHours * 12); // 5분 간격
+      const rows = all.slice(-n);
+      const labels = rows.map(r => fmtShort(r.ts));
+      const missing = rows.filter(r => r.temperature_c == null).length;
+      note.textContent = `${labels[0] ?? ""} ~ ${labels[labels.length - 1] ?? ""} · 5분 간격 ${rows.length}개 시점` +
+        ` · 이 기간 전력량 ${energyKwh(rows).toFixed(2)} kWh` +
+        (missing ? ` · 수신 없음 ${missing}개 시점 (그래프 끊김 구간)` : "") + " · 점선 = 판정 기준";
+
+      METRICS.forEach(m => {
+        const id = "hist" + m.canvas;
+        charts[id]?.destroy();
+        const data = rows.map(r => r[m.key]);
+        charts[id] = new Chart(document.getElementById(id), {
+          type: "line",
+          data: { labels, datasets: [
+            { label: `${m.label} (${m.unit})`, data, borderColor: m.color, backgroundColor: m.color + "26",
+              borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: true, spanGaps: false },
+            ...thresholdDatasets(m.key, labels.length)
+          ] },
+          options: baseOptions(`${m.label} (${m.unit})`, {
+            xTicks: { maxTicksLimit: 8, maxRotation: 0 },
+            tooltip: { callbacks: { label: c => c.raw == null ? " 수신 없음" : ` ${c.raw} ${m.unit}` } }
+          })
+        });
+      });
+      renderHistoryTable(t, rows);
+      renderDailyEnergy(t, all);
+    }
+
+    // 선택한 수족관의 시간별 기록을 그래프와 같은 기간으로 표에 표시 (최신순)
+    function renderHistoryTable(t, rows) {
+      const wrap = document.getElementById("historyTable");
+      if (!rows.length) { wrap.innerHTML = '<div class="empty">표시할 기록이 없습니다.</div>'; return; }
+      const cols = ["temperature_c", "water_level_pct", "turbidity_ntu", "power_w"].map(k => METRICS.find(m => m.key === k));
+      const cell = (r, m) => {
+        const v = r[m.key];
+        if (!isNum(v)) return `<td class="na">수신 없음</td>`;
+        const lv = metricLevel(m.key, v);
+        return `<td class="${lv === "normal" ? "" : lv}">${v.toFixed(m.digits)}</td>`;
+      };
+      const avgOf = k => avg(rows.map(r => r[k]).filter(isNum));
+      const abnormal = rows.filter(r => r.status && r.status !== "normal").length;
+      wrap.innerHTML = `
+        <div class="data-table-title">${esc(t.tank_name)} 시간별 측정값
+          <span>그래프와 같은 기간 · 최신순 · 정상 외 ${abnormal}개 시점 · 주황 = 주의 · 빨강 = 위험</span></div>
+        <table class="data-table">
+          <thead><tr><th class="l">측정 시각</th><th class="l">상태</th>${cols.map(m => `<th>${m.label} (${m.unit})</th>`).join("")}</tr></thead>
+          <tbody>${rows.slice().reverse().map(r => `
+            <tr><td class="l">${fmtShort(r.ts)}</td><td class="l">${r.status ? badgeHtml(r.status) : "—"}</td>${cols.map(m => cell(r, m)).join("")}</tr>`).join("")}
+          </tbody>
+          <tfoot><tr><td class="l" colspan="2">평균 · ${rows.length}개 시점 · 이 기간 전력량 ${energyKwh(rows).toFixed(2)} kWh</td>
+            ${cols.map(m => `<td>${fmt(avgOf(m.key), m.digits)}</td>`).join("")}</tr></tfoot>
+        </table>`;
+    }
+    function destroyHistory() {
+      METRICS.forEach(m => { charts["hist" + m.canvas]?.destroy(); delete charts["hist" + m.canvas]; });
+    }
+
+    // ================= 이벤트 =================
+    function syncViewButtons() {
+      document.getElementById("btnViewGlobal").classList.toggle("active", state.view === "global");
+      document.getElementById("btnViewDetail").classList.toggle("active", state.view === "detail");
+    }
+    document.getElementById("btnViewGlobal").onclick = () => { state.view = "global"; syncViewButtons(); render(); };
+    document.getElementById("btnViewDetail").onclick = () => {
+      state.view = "detail";
+      if (!state.selectedId && state.tanks[0]) state.selectedId = state.tanks[0].tank_id;
+      syncViewButtons(); render();
+    };
+    document.getElementById("rangeToggle").addEventListener("click", e => {
+      const b = e.target.closest("button[data-hours]");
+      if (!b) return;
+      state.rangeHours = Number(b.dataset.hours);
+      document.querySelectorAll("#rangeToggle button").forEach(x => x.classList.toggle("active", x === b));
+      const t = state.tanks.find(d => d.tank_id === state.selectedId);
+      if (t) renderHistory(t);
+    });
+
+    // 장비 등록: 화면 메모리에만 추가 (파일은 변경하지 않음). 측정값은 지어내지 않고 '데이터 없음'으로 표시
+    document.getElementById("btnAddDevice").onclick = () => {
+      const name = document.getElementById("inputName").value.trim();
+      const loc = document.getElementById("inputLocation").value.trim();
+      if (!name) { alert("수족관 이름을 입력하세요."); return; }
+      const nextNo = state.tanks.reduce((mx, t) => Math.max(mx, parseInt(t.tank_id.split("-")[1], 10) || 0), 0) + 1;
+      const no = String(nextNo).padStart(3, "0");
+      state.tanks.push({
+        tank_id: "TANK-" + no, device_id: "US-" + no, tank_name: name, location: loc || "미지정 위치",
+        description: "", capacity_l: null, rated_power_w: null, ultrasonic_frequency_khz: null,
+        timestamp: null, temperature_c: null, water_level_pct: null, turbidity_ntu: null, power_w: null,
+        is_online: false, device_state: "unknown", status: "nodata", alert_codes: "", last_seen: null
+      });
+      document.getElementById("inputName").value = "";
+      document.getElementById("inputLocation").value = "";
+      selectTank("TANK-" + no);
+    };
+    ["inputName", "inputLocation"].forEach(id =>
+      document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("btnAddDevice").click(); }));
+
+    // ================= 실시간 갱신 =================
+    // POLL_MS 마다 dashboard_data.json 을 다시 읽고, 기준 시각이 바뀌었으면 화면 전체를 새 값으로 다시 그림
+    const POLL_MS = 5000;
+    const live = { timer: null, paused: false, lastChange: Date.now(), busy: false };
+
+    function setLiveStatus(kind, text) {
+      const el = document.getElementById("liveStatus");
+      el.className = "live-status " + kind;
+      document.getElementById("liveText").textContent = text;
+    }
+    function clock(d = new Date()) {
+      return d.toLocaleTimeString("ko-KR", { hour12: false });
+    }
+
+    // 다시 그려도 표 스크롤 위치가 처음으로 돌아가지 않게 보존
+    function renderKeepScroll() {
+      const ids = ["globalTable", "historyTable", "dailyEnergyTable", "alertHistory"];
+      const pos = ids.map(id => document.getElementById(id)?.scrollTop ?? 0);
+      render();
+      const restore = () => ids.forEach((id, i) => { const el = document.getElementById(id); if (el) el.scrollTop = pos[i]; });
+      restore();
+      setTimeout(restore, 0);   // 상세 표는 기록을 읽은 뒤(비동기) 그려지므로 한 번 더
+    }
+
+    async function pollOnce() {
+      if (live.busy) return;
+      live.busy = true;
+      try {
+        const before = state.snapshot;
+        await loadDashboard();
+        if (state.snapshot !== before) {
+          live.lastChange = Date.now();
+          renderKeepScroll();
+        }
+        const quiet = Date.now() - live.lastChange > POLL_MS * 3;
+        if (quiet) setLiveStatus("idle", `새 데이터 없음 · ${clock()} 확인`);
+        else setLiveStatus("on", `실시간 · ${clock()} 갱신`);
+      } catch (e) {
+        setLiveStatus("error", `연결 끊김 · ${clock()} 재시도 중`);
+      } finally {
+        live.busy = false;
+      }
+    }
+
+    function startLive() {
+      clearInterval(live.timer);
+      live.paused = false;
+      live.lastChange = Date.now() - (state.isLive ? 0 : POLL_MS * 10);
+      setLiveStatus(state.isLive ? "on" : "idle", state.isLive ? `실시간 · ${clock()} 갱신` : "실시간 · 새 데이터 대기 중");
+      live.timer = setInterval(pollOnce, POLL_MS);
+    }
+    function stopLive() {
+      clearInterval(live.timer);
+      live.paused = true;
+      setLiveStatus("paused", `일시 정지 · 클릭해서 다시 시작`);
+    }
+    document.getElementById("liveStatus").onclick = () => {
+      if (live.paused) { startLive(); pollOnce(); } else stopLive();
+    };
+
+    // ================= 시작 =================
+    (async () => {
+      try {
+        await loadDashboard();
+        // ?tank=TANK-006 으로 특정 수조 상세를 바로 열 수 있음
+        const q = new URLSearchParams(location.search).get("tank");
+        if (q && state.tanks.some(t => t.tank_id === q)) { state.selectedId = q; state.view = "detail"; syncViewButtons(); }
+        render();
+        // 누적 전력량 계산을 위해 기록을 바로 읽고, 읽으면 요약·상세를 다시 그림
+        loadHistory()
+          .then(() => renderKeepScroll())   // 카드 미니 추이·표 전력량도 기록이 있어야 그려짐
+          .catch(err => { state.historyError = err.message; renderTopSummary(); });
+        startLive();
+      } catch (e) {
+        document.getElementById("content").innerHTML = `
+          <div class="error-box">
+            <b>데이터를 불러오지 못했습니다.</b> ${esc(e.message)}<br/>
+            브라우저는 파일을 더블클릭해 연(file://) 페이지에서 JSON/CSV 읽기를 막습니다.<br/>
+            이 폴더에서 <code>python -m http.server 8000</code> 실행 후
+            <code>http://localhost:8000/ultra-dashboard.html</code> 로 여세요.
+          </div>`;
+      }
+    })();
+  </script>
+  <script src="./chatbot.js"></script>
+</body>
+</html>

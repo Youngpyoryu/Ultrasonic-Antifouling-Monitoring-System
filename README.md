@@ -1,0 +1,170 @@
+# 초음파 방오 장비 모니터링 — 교육용 가상 데이터
+
+모든 데이터는 합성 데이터입니다. 실제 장비 측정값, 방오 성능 또는 생물학적 인과관계를 나타내지 않습니다. 첨부 화면의 30대 구성을 참고했으며 화면 숫자를 그대로 복제하지 않았습니다. 수조당 장비 1대로 가정합니다.
+
+## 바로 사용할 파일
+
+| 파일 | 용도 | 행 수 |
+|---|---|---:|
+| current_status.csv | 장비 목록, 수조 카드, 수조별 비교 그래프 | 30 |
+| sensor_history.csv | 시간에 따른 센서 변화 그래프 | 60,480 |
+| tanks.csv | 수조 이름, 위치, 장비 등록 정보 | 30 |
+| alerts.csv | 이상 상황 목록과 시작·종료 시각 | 5 |
+| dashboard_data.json | 상단 요약, 현재 카드, 경고를 웹에서 사용 | JSON |
+| thresholds.json | 교육용 상태 판정 기준 | JSON |
+| generate_data.py | 같은 데이터를 다시 생성하거나 수정 | Python |
+| ultra-dashboard.html | 모니터링 대시보드 (웹 서버로 열기) | HTML |
+| chatbot.js | 대시보드 안의 데이터 질문 챗봇 (규칙 기반) | JS |
+| live_simulator.py | 실시간 모드용 가상 측정값 생성기 | Python |
+
+CSV는 Excel 한글 호환을 위해 UTF-8 BOM으로 저장했습니다. 빈 센서값은 결측값이며 0이 아닙니다. JSON에서는 null입니다. CSV의 True/False는 불리언이며 웹에서 문자열로 읽으면 직접 변환해야 합니다. 빈값을 Number()에 바로 넣으면 0이 되므로 먼저 빈값 여부를 확인하세요.
+
+## 기간과 개수
+
+- 한국시간 2026-10-27 16:05 ~ 2026-11-03 16:00, 5분 간격.
+- 수조당 2,016행 × 30개 = 60,480행. 각 행은 한 시점·한 수조입니다.
+- 난수 seed=42. 날짜·간격·수조 이름은 생성 코드에서 수정할 수 있습니다.
+- 시계열은 완만한 주기와 작은 잡음을 포함합니다. 마지막 2시간에 이상 상황이 나타납니다.
+
+## 화면과 필드 연결
+
+| 화면 항목 | JSON 경로 / 필드 | 단위 또는 설명 |
+|---|---|---|
+| 장비 총수 | summary.total_devices | 대 |
+| 이상 감지 장비 수 | summary.abnormal_devices | 주의+위험+통신 끊김, 중복 없이 장비 수 |
+| 현재 총 전력 | summary.known_total_power_w | W, 통신되는 장비의 현재 전력 합 |
+| 총 전력 완전성 | summary.power_is_partial | true이면 전체 30대 합계를 알 수 없음 |
+| 평균 수온 | summary.average_temperature_c | °C, 수신된 수조의 단순 평균 |
+| 평균 수위 | summary.average_water_level_pct | %, 수신된 수조의 단순 평균 |
+| 평균 탁도 | summary.average_turbidity_ntu | NTU, 수신된 수조의 단순 평균 |
+| 수조 카드 | tanks 배열 | 수조별 최신값과 상태 |
+| 4개 비교 그래프 | tanks[].tank_name 및 4개 센서값 | 수조 이름을 가로축으로 사용 |
+| 수조별 시간 그래프 | sensor_history.csv | tank_id로 선택 후 timestamp 순서로 표시 |
+| 경고 목록 | alerts 배열 | alert_code, severity, started_at |
+
+전력 W는 그 시점의 전력입니다. 누적 전력량 Wh/kWh와 다릅니다. 통신 끊김 장비는 상단 평균·전력 합에서 제외하며 현재 유효 센서 수는 29개입니다. UI에서는 `전력 2053.2 W (29/30대 수신)`처럼 표시하세요. 센서 평균은 수조 부피로 가중한 평균이 아닙니다.
+
+## 데이터 사전
+
+| 필드 | 의미 |
+|---|---|
+| timestamp | 측정 예정 시각, ISO 8601 +09:00 |
+| tank_id / device_id | 수조 / 장비 고유 ID. 파일 연결 키 |
+| tank_name | 수조 이름 |
+| floor / zone / location | 층 / 구역 번호 / 화면 표시 위치 |
+| description | 수조 설명 |
+| capacity_l | 가상 수조 용량, L |
+| rated_power_w | 가상 장비 정격 전력, W |
+| ultrasonic_frequency_khz | 가상 장비 설정 주파수, 40 kHz. 측정값이 아님 |
+| temperature_c | 수온, °C |
+| water_level_pct | 센서 기준 상대 수위, 0~100% |
+| turbidity_ntu | 탁도, NTU |
+| power_w | 장비의 현재 소비 전력, W |
+| is_online | 센서 패킷 수신 여부 |
+| device_state | running 운전 / stopped 정지 / offline 통신 끊김 |
+| status | normal 정상 / warning 주의 / critical 위험 / offline 통신 끊김 |
+| alert_codes | 경고 코드. 여러 개일 때 \| 로 연결, 없으면 빈 문자열 |
+| last_seen | 마지막 정상 통신 시각. 통신 끊김 이후에는 갱신하지 않음 |
+| is_synthetic | 합성 데이터 여부, 항상 true |
+
+alerts.csv의 event_id는 이벤트 고유 ID, started_at은 최초 이상 시각, ended_at은 해제 시각(현재 모두 빈값), is_active는 진행 여부입니다. severity는 이벤트 발생 시 상태입니다.
+
+## 현재 이상 상황
+
+| 수조 ID | 수조 이름 | 상태 | 상황 / 코드 |
+|---|---|---|---|
+| TANK-006 | 산호 전시 수족관 | 주의 | 수온 상승 / temperature_out_of_range |
+| TANK-012 | 생태 수조 2 | 주의 | 수위 저하 / low_water_level |
+| TANK-018 | 열대어 수조 | 주의 | 탁도 상승 / high_turbidity |
+| TANK-024 | 패류 수조 | 위험 | 장비 정지, 전력 0 W / device_stopped |
+| TANK-030 | 예비 수조 C | 통신 끊김 | 마지막 30분간 수신 없음 / communication_lost |
+
+나머지 25대는 정상입니다. 통신 끊김은 장비의 실제 운전 상태를 알 수 없는 상태로, 장비 정지와 구분합니다.
+
+## 교육용 판정 기준
+
+| 항목 | 주의 | 위험 |
+|---|---|---|
+| 수온 | 20°C 미만 또는 28°C 초과 | 18°C 이하 또는 30°C 이상 |
+| 수위 | 60% 미만 | 40% 미만 |
+| 탁도 | 5 NTU 초과 | 10 NTU 이상 |
+| 전력 | 15 W 미만 또는 130 W 초과 | 150 W 이상 또는 장비 정지(0 W) |
+| 통신 | 이번 시점의 센서 패킷 누락이면 offline | 위험과 별도 상태 |
+
+우선순위: 통신 끊김 → 위험 → 주의 → 정상. 장비 정지 코드가 일반 저전력 코드보다 우선합니다. 기준은 UI 테스트용으로 임의 설정했으며 실제 수조의 적정 범위나 장비 운영 기준이 아닙니다. 정격 전력은 표시용 등록 정보이며 판정에는 위 고정 기준을 사용합니다.
+
+## 사용 예시
+
+Python에서 읽기:
+
+```python
+import pandas as pd
+df = pd.read_csv('sensor_history.csv')
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+print(df.head())
+one_tank = df[df['tank_id'] == 'TANK-006']
+```
+
+웹 프로젝트의 정적 데이터 폴더에 dashboard_data.json을 넣고 읽기:
+
+```javascript
+const response = await fetch('./dashboard_data.json');
+if (!response.ok) throw new Error('데이터를 읽을 수 없습니다.');
+const data = await response.json();
+console.log(data.summary); // 상단 요약
+console.log(data.tanks);   // 수조 카드 30개
+console.log(data.alerts);  // 진행 중 경고 5개
+```
+
+시간별 기록은 CSV로 별도 제공하며 JSON에는 전체 시계열을 중복 저장하지 않았습니다. 실제 주기적 갱신을 구현하려면 CSV를 시각별로 묶어 차례대로 표시하거나 생성 코드를 확장하세요. 현재 파일 자체는 고정된 스냅샷입니다.
+
+재생성: Python이 설치된 환경에서 압축 해제한 폴더의 `python generate_data.py` 실행. 같은 폴더의 데이터 파일을 덮어씁니다. Python 표준 라이브러리만 사용합니다.
+
+## 실시간 모드
+
+터미널 2개를 이 폴더에서 엽니다.
+
+```
+python -m http.server 8000          # 터미널 1: 웹 서버
+python live_simulator.py            # 터미널 2: 5초마다 가상 측정값 5분치 추가
+```
+
+브라우저에서 `http://localhost:8000/ultra-dashboard.html` 을 엽니다. 대시보드는 5초마다 `dashboard_data.json` 을 다시 읽어 카드·그래프·표·전력량(kWh)을 갱신합니다. 상단 `실시간` 표시를 클릭하면 갱신을 멈추거나 다시 시작합니다.
+
+- 시뮬레이터는 `sensor_history.csv`(최근 7일치 유지), `current_status.csv`, `alerts.csv`, `dashboard_data.json` 을 계속 덮어씁니다.
+- 옵션: `--interval 2`(대기 초), `--incident-rate 0.004`(이상 상황 발생 확률), `--seed 7`, `--ticks 100`(횟수 후 종료).
+- 원래 7일치 데이터로 되돌리기: `python generate_data.py`
+
+## 대시보드 기능 (ultra-dashboard.html)
+
+브라우저는 더블클릭으로 연 파일(file://)에서 CSV·JSON 읽기를 막으므로, 이 폴더에서 `python -m http.server 8000` 실행 후 `http://localhost:8000/ultra-dashboard.html` 로 엽니다.
+
+**중앙 모니터링**
+- 상단 카드: 현재 총 전력(W), 누적 총 전력량(kWh), 평균 수온·수위·탁도. 통신 끊김 장비는 제외.
+- 수조별 비교 그래프 4개(수온·수위·탁도·전력, 점선 = 판정 기준)와 같은 값의 표. 표에는 수조별 누적 전력량과 진행 중 경고 수도 표시. 행을 누르면 상세 화면으로 이동.
+- 수조 카드: 현재값, 최근 6시간 미니 추이, 7일 누적 전력량.
+
+**수족관별 보기** (좌측 목록에서 수조 선택, 또는 `?tank=TANK-006`)
+- 현재값, 누적 전력량, 진행 중 경고.
+- 시간별 그래프 4개와 같은 기간(6시간·24시간·7일)의 시간별 측정값 표. 기간 전력량 표시.
+- 일별 전력량 그래프·표. 하루 288개 시점에 못 미치는 날은 `*`/`(일부)` 표시.
+- 경고 이력: alerts.csv 의 발생·해제 시각과 지속 시간.
+
+**전력량 계산** — 기록이 5분 간격이므로 `전력량(kWh) = Σ power_w × (5/60) ÷ 1000`. 수신 없는 시점(빈 power_w)은 0으로 계산합니다. 원본 7일 전체 합계는 365.42 kWh입니다.
+
+## 데이터 질문 챗봇 (chatbot.js)
+
+대시보드 오른쪽 아래 `💬 데이터에 질문하기` 버튼. API 키 없이 브라우저 안에서 질문의 수조 이름·측정 항목·기간·집계를 찾아 현재 불러온 데이터로 계산합니다.
+
+| 유형 | 예시 |
+|---|---|
+| 상태 | 지금 이상 있는 수조 · 통신 끊긴 수조 · 패류 수조 상태 · 24번 수조 |
+| 측정값 | 수온 가장 높은 수조 · 탁도 상위 5개 · 평균 수위 · 현재 총 전력 사용량 |
+| 기간 | 산호 전시 수족관 최근 6시간 수온 · 해파리 수조 어제 최고 수온 · 11월 1일 탁도 가장 높은 수조 |
+| 전력량 | 총 전력량 · 어제 전력량 많은 수조 · 최근 3일 전력량 · 로비 수족관 일별 전력량 |
+| 경고 | 진행 중 경고 · 패류 수조 경고 이력 |
+| 비교 | 로비 수족관 vs 메인 전시 수족관 수온 |
+| 기준 | 수온 판정 기준 |
+
+- '오늘·어제·최근 N시간'은 실제 날짜가 아니라 **데이터의 가장 최근 시각** 기준입니다(원본 데이터는 11/03 16:00).
+- 정해진 유형의 질문만 이해합니다. 원인 설명·예측 같은 자유 대화는 하지 않습니다.

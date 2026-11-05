@@ -1,0 +1,5 @@
+# Claude Code / oh-my-claudecode 작업 상태
+.omc/
+# 시뮬레이터가 파일 교체 중 남길 수 있는 임시 파일
+*.tmp
+__pycache__/
